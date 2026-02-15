@@ -1,328 +1,266 @@
 # =========================================================
-#   GESTOR DHCP PROFESIONAL - WINDOWS SERVER 2022
+# GESTOR DHCP PROFESIONAL - ETHERNET 2 (V.FINAL)
 # =========================================================
 
-# =========================================================
-#   FUNCIONES DE VALIDACION
-# =========================================================
+# Variables Globales de Sesión
+$script:RespaldoRed = $null
+$script:NombreInterfaz = "Ethernet 2"
 
-function Validar-IP {
+# ================= FUNCIONES DE APOYO (IP) =================
+
+function validar-ip {
     param ([string]$IP)
-
+    
+    # 1. Formato básico
     if ($IP -notmatch '^([0-9]{1,3}\.){3}[0-9]{1,3}$') { return $false }
-
+    
     $octetos = $IP.Split('.')
+    $primero = [int]$octetos[0]
+
+    # 2. BLOQUEO DE SEGURIDAD (IPs No Válidas para Hosts/Servidores)
+    # Bloquear Red 0.x.x.x (Incluye 0.0.0.0 y 0.0.0.1)
+    if ($primero -eq 0) {
+        Write-Host "¡Error! IPs que inician con 0 ($IP) son reservadas." -ForegroundColor Red
+        return $false
+    }
+    # Bloquear Loopback (127.x.x.x)
+    if ($primero -eq 127) {
+        Write-Host "¡Error! Rango 127.x.x.x es para pruebas locales (loopback)." -ForegroundColor Red
+        return $false
+    }
+    # Bloquear Multicast/Experimental (224+)
+    if ($primero -ge 224) {
+        Write-Host "¡Error! Rango $IP es reservado o experimental." -ForegroundColor Red
+        return $false
+    }
+
+    # 3. Validar rango de octetos (0-255)
     foreach ($o in $octetos) {
         if ([int]$o -lt 0 -or [int]$o -gt 255) { return $false }
     }
-
-    if ($IP -in @("0.0.0.0","255.255.255.255","127.0.0.1")) { return $false }
-
     return $true
 }
 
-function Pedir-IP {
-    param(
-        [string]$Mensaje,
-        [bool]$Opcional = $false
-    )
-
+function pedir-ip {
+    param([string]$mensaje, [bool]$opcional = $false)
     do {
-        $ip = Read-Host $Mensaje
-
-        if ($Opcional -and [string]::IsNullOrWhiteSpace($ip)) {
-            return ""
-        }
-
-        if (-not (Validar-IP $ip)) {
-            Write-Host "IP invalida" -ForegroundColor Red
-        }
-
-    } while (-not (Validar-IP $ip))
-
+        $ip = Read-Host $mensaje
+        if ($opcional -and [string]::IsNullOrWhiteSpace($ip)) { return $null }
+        $esValida = validar-ip $ip
+        if (-not $esValida) { Write-Host "Intente de nuevo..." -ForegroundColor Yellow }
+    } while (-not $esValida)
     return $ip
 }
 
-function IP-a-Entero($ip) {
+function ip-a-entero($ip) {
     $o = $ip.Split('.')
-    return ([int64]$o[0] -shl 24) -bor
-           ([int64]$o[1] -shl 16) -bor
-           ([int64]$o[2] -shl 8)  -bor
-           ([int64]$o[3])
+    return ([int64]$o[0] -shl 24) -bor ([int64]$o[1] -shl 16) -bor ([int64]$o[2] -shl 8) -bor [int64]$o[3]
 }
 
-# =========================================================
-#   INSTALAR DHCP
-# =========================================================
-function Instalar-DHCP {
+# ================= FUNCIONES DE RED =================
 
-    Clear-Host
-    Write-Host "===== INSTALACION DHCP ====="
+function Cambiar-IP-Servidor {
+    param($NuevaIP, $Mascara)
+    
+    $adaptador = Get-NetAdapter -Name $script:NombreInterfaz -ErrorAction SilentlyContinue
+    if (-not $adaptador) {
+        Write-Host "Error: No se encontro el adaptador '$($script:NombreInterfaz)'." -ForegroundColor Red
+        return $null
+    }
 
-    $feature = Get-WindowsFeature -Name DHCP
+    # RESPALDO SEGURO
+    $configActual = Get-NetIPAddress -InterfaceAlias $script:NombreInterfaz -AddressFamily IPv4 -ErrorAction SilentlyContinue | Select-Object -First 1
+    $gatewayActual = (Get-NetRoute -InterfaceAlias $script:NombreInterfaz -DestinationPrefix "0.0.0.0/0" -ErrorAction SilentlyContinue).NextHop
 
-    if ($feature -and $feature.Installed) {
-        Write-Host "El Rol DHCP ya esta instalado." -ForegroundColor Yellow
-        return
+    if ($null -ne $configActual) {
+        $script:RespaldoRed = @{
+            IPAddress    = $configActual.IPAddress
+            PrefixLength = $configActual.PrefixLength
+            Gateway      = if ([string]::IsNullOrWhiteSpace($gatewayActual)) { $null } else { $gatewayActual }
+        }
+        Write-Host "`n[!] Respaldo guardado de Ethernet 2: $($script:RespaldoRed.IPAddress)" -ForegroundColor Gray
     }
 
     try {
-        Install-WindowsFeature -Name DHCP -IncludeManagementTools -ErrorAction Stop
-        Write-Host "Instalacion completada correctamente." -ForegroundColor Green
-    }
-    catch {
-        Write-Host "Error durante la instalacion." -ForegroundColor Red
-    }
-}
-
-# =========================================================
-#    VERIFICAR ESTADO DHCP
-# =========================================================
-function Verificar-DHCP {
-
-    Clear-Host
-    Write-Host "===== VERIFICACION DHCP ====="
-
-    $feature = Get-WindowsFeature -Name DHCP
-
-    if (-not $feature -or -not $feature.Installed) {
-        Write-Host "El Rol DHCP NO esta instalado." -ForegroundColor Red
-        return
-    }
-
-    Write-Host "Rol DHCP: INSTALADO" -ForegroundColor Green
-
-    $servicio = Get-Service -Name DHCPServer -ErrorAction SilentlyContinue
-
-    if (-not $servicio) {
-        Write-Host "Servicio no encontrado." -ForegroundColor Red
-        return
-    }
-
-    Write-Host "Estado del Servicio: $($servicio.Status)"
-
-    $scopes = Get-DhcpServerv4Scope -ErrorAction SilentlyContinue
-    if ($scopes) {
-        Write-Host "`nAmbitos configurados:"
-        $scopes | Format-Table Name, ScopeId, State -AutoSize
-    }
-    else {
-        Write-Host "`nNo hay ambitos configurados."
-    }
-}
-
-# =========================================================
-#    CONFIGURAR DHCP (MODIFICADO SOLO LO NECESARIO)
-# =========================================================
-function Configurar-DHCP {
-
-    Clear-Host
-    Write-Host "===== CONFIGURACION DHCP ====="
-
-    $scopeName = Read-Host "Nombre del ambito"
-    $segmento = Pedir-IP "Segmento de red (ej: 192.168.1.0)"
-    $subnetMask = Pedir-IP "Mascara de red (ej: 255.255.255.0)"
-
-    $scopeID = $segmento
-
-    $ipInicio = Pedir-IP "IP Inicial"
-    $ipFin = Pedir-IP "IP Final"
-
-    $inicioInt = IP-a-Entero $ipInicio
-    $finInt = IP-a-Entero $ipFin
-
-    if ($finInt -le $inicioInt) {
-        Write-Host "IP Final debe ser mayor que IP Inicial." -ForegroundColor Red
-        return
-    }
-
-    # =====================================================
-    #   NUEVA LOGICA: IP INICIAL = IP ESTATICA SERVIDOR
-    # =====================================================
-
-    $IPServidor = $ipInicio
-
-    $redBase = $ipInicio.Substring(0, $ipInicio.LastIndexOf('.'))
-    $octIni = [int]$ipInicio.Split('.')[-1]
-    $ipPoolInicio = "$redBase." + ($octIni + 1)
-
-    Write-Host "`nLa IP $IPServidor sera configurada como IP ESTATICA del servidor." -ForegroundColor Yellow
-    Write-Host "El pool DHCP real sera: $ipPoolInicio - $ipFin"
-
-    # Cambiar IP del servidor (prefijo 24 por defecto)
-    cambiar-ip-servidor -NuevaIP $IPServidor -Prefijo 24
-
-    # =====================================================
-
-    $leaseHoras = Read-Host "Tiempo de concesion (horas)"
-    if (-not ($leaseHoras -match '^\d+$')) {
-        Write-Host "Tiempo invalido." -ForegroundColor Red
-        return
-    }
-
-    $leaseTime = New-TimeSpan -Hours $leaseHoras
-
-    $gateway = Pedir-IP "Gateway (Enter para omitir)" $true
-    $dns = Pedir-IP "DNS (Enter para omitir)" $true
-
-    Write-Host "`nResumen:"
-    Write-Host "Ambito: $scopeName"
-    Write-Host "Red: $segmento"
-    Write-Host "Mascara: $subnetMask"
-    Write-Host "Rango DHCP: $ipInicio - $ipFin"
-    Write-Host "IP Servidor: $IPServidor"
-
-    $conf = Read-Host "Confirmar (C)"
-    if ($conf -notin @("C","c")) { return }
-
-    if (Get-DhcpServerv4Scope -ScopeId $scopeID -ErrorAction SilentlyContinue) {
-        Remove-DhcpServerv4Scope -ScopeId $scopeID -Force
-    }
-
-    Add-DhcpServerv4Scope `
-        -Name $scopeName `
-        -StartRange $ipInicio `
-        -EndRange $ipFin `
-        -SubnetMask $subnetMask `
-        -State Active
-
-    Set-DhcpServerv4Scope `
-        -ScopeId $scopeID `
-        -LeaseDuration $leaseTime
-
-    # Excluir IP del servidor
-    Add-DhcpServerv4ExclusionRange `
-        -ScopeId $scopeID `
-        -StartRange $IPServidor `
-        -EndRange $IPServidor
-
-    if ($gateway) {
-        Set-DhcpServerv4OptionValue -ScopeId $scopeID -OptionId 3 -Value $gateway
-    }
-
-    if ($dns) {
-        Set-DhcpServerv4OptionValue -ScopeId $scopeID -OptionId 6 -Value $dns
-    }
-
-    Restart-Service DHCPServer
-
-    Write-Host "Configuracion aplicada correctamente." -ForegroundColor Green
-}
-# =========================================================
-#    ELIMINAR AMBITO
-# =========================================================
-function Eliminar-Scope {
-
-    Clear-Host
-    Write-Host "===== ELIMINAR AMBITO DHCP ====="
-
-    $scopes = Get-DhcpServerv4Scope -ErrorAction SilentlyContinue
-
-    if (-not $scopes) {
-        Write-Host "No existen ambitos configurados." -ForegroundColor Yellow
-        return
-    }
-
-    $scopes | Format-Table Name, ScopeId, State -AutoSize
-
-    $scopeID = Read-Host "`nIngrese el ScopeId a eliminar"
-
-    if (-not (Validar-IP $scopeID)) {
-        Write-Host "ScopeId invalido." -ForegroundColor Red
-        return
-    }
-
-    $conf = Read-Host "Confirma eliminar? (S/N)"
-    if ($conf -notin @("S","s")) { return }
-
-    Remove-DhcpServerv4Scope -ScopeId $scopeID -Force
-    Write-Host "Ambito eliminado correctamente." -ForegroundColor Green
-}
-
-# =========================================================
-#   MONITOREAR DHCP
-# =========================================================
-function Monitorear-DHCP {
-
-    while ($true) {
-        Clear-Host
-        Write-Host "===== MONITOR DHCP ====="
-
-        Get-Service DHCPServer
-
-        $scopes = Get-DhcpServerv4Scope -ErrorAction SilentlyContinue
-
-        foreach ($scope in $scopes) {
-            Write-Host "`nAmbito: $($scope.Name)"
-            Get-DhcpServerv4Lease -ScopeId $scope.ScopeId |
-                Format-Table IPAddress, HostName, ClientId, LeaseExpiryTime -AutoSize
-        }
-
-        Start-Sleep -Seconds 3
-    }
-}
-
-# =========================================================
-#   VER IP ACTUAL DEL SERVIDOR
-# =========================================================
-function Ver-IP-Servidor {
-
-    Clear-Host
-    Write-Host "===== INFORMACION DE RED DEL SERVIDOR =====`n"
-
-    $config = Get-NetIPConfiguration | Where-Object { $_.IPv4Address -ne $null }
-
-    foreach ($c in $config) {
-
-        Write-Host "Adaptador: $($c.InterfaceAlias)"
-        Write-Host "IP IPv4 : $($c.IPv4Address.IPAddress)"
-        Write-Host "Mascara : $($c.IPv4Address.PrefixLength)"
+        Write-Host "[!] Configurando IP estatica $NuevaIP ($Mascara)..." -ForegroundColor Yellow
+        Get-NetIPAddress -InterfaceAlias $script:NombreInterfaz -AddressFamily IPv4 | Remove-NetIPAddress -Confirm:$false
         
-        if ($c.IPv4DefaultGateway) {
-            Write-Host "Gateway : $($c.IPv4DefaultGateway.NextHop)"
+        # Calcular PrefixLength desde máscara decimal
+        $bits = 0
+        $Mascara.Split('.') | ForEach-Object {
+            $byte = [int]$_
+            while ($byte -gt 0) { $bits += $byte % 2; $byte = [math]::Floor($byte / 2) }
         }
 
-        if ($c.DnsServer.ServerAddresses) {
-            Write-Host "DNS     : $($c.DnsServer.ServerAddresses -join ', ')"
-        }
-
-        Write-Host "------------------------------------------"
+        New-NetIPAddress -InterfaceAlias $script:NombreInterfaz -IPAddress $NuevaIP -PrefixLength $bits -ErrorAction Stop
+        Write-Host "OK: IP asignada correctamente." -ForegroundColor Green
+        return $script:NombreInterfaz
+    } catch {
+        Write-Host "Error: $($_.Exception.Message)" -ForegroundColor Red
+        return $null
     }
-
-    Read-Host "`nPresiona Enter para continuar..."
 }
 
-# =========================================================
-#   MENU PRINCIPAL
-# =========================================================
+function Restaurar-IP-Original {
+    if ($null -eq $script:RespaldoRed) {
+        Write-Host "No hay datos de respaldo para Ethernet 2." -ForegroundColor Yellow
+        return
+    }
+    Write-Host "`n[!] Restaurando Ethernet 2 a su IP original..." -ForegroundColor Cyan
+    try {
+        Get-NetIPAddress -InterfaceAlias $script:NombreInterfaz -AddressFamily IPv4 | Remove-NetIPAddress -Confirm:$false
+        $params = @{
+            InterfaceAlias = $script:NombreInterfaz
+            IPAddress      = $script:RespaldoRed.IPAddress
+            PrefixLength   = $script:RespaldoRed.PrefixLength
+            ErrorAction    = "Stop"
+        }
+        if ($null -ne $script:RespaldoRed.Gateway) { $params.Add("DefaultGateway", $script:RespaldoRed.Gateway) }
+        New-NetIPAddress @params
+        Write-Host "OK: Servidor restaurado." -ForegroundColor Green
+        $script:RespaldoRed = $null
+    } catch { Write-Host "Error al restaurar: $($_.Exception.Message)" -ForegroundColor Red }
+}
+
+# ================= MODULOS DHCP =================
+
+function Instalar-DHCP {
+    Clear-Host
+    Write-Host "===== INSTALACION DE ROL DHCP ====="
+    if ((Get-WindowsFeature DHCP).Installed) {
+        Write-Host "El rol DHCP ya esta instalado." -ForegroundColor Yellow
+    } else {
+        Install-WindowsFeature DHCP -IncludeManagementTools
+        Write-Host "Instalacion completada." -ForegroundColor Green
+    }
+}
+
+function Configurar-DHCP {
+    if (-not (Get-WindowsFeature DHCP).Installed) {
+        Write-Host "Error: Instale el rol DHCP primero." -ForegroundColor Red
+        return
+    }
+
+    Clear-Host
+    Write-Host "===== CONFIGURACION DE AMBITO (MODO MIXTO) =====" -ForegroundColor Cyan
+
+    $nombre   = Read-Host "Nombre del ambito"
+    $ipInicio = pedir-ip "IP del Servidor (IP inicial)"
+    $ipFin    = pedir-ip "IP Final del rango"
+
+    if ((ip-a-entero $ipInicio) -ge (ip-a-entero $ipFin)) {
+        Write-Host "Error: Rango invalido." -ForegroundColor Red; return
+    }
+
+    # ELECCIÓN DE MÁSCARA
+    $opMask = Read-Host "¿Desea calcular la mascara automaticamente? (S/N)"
+    $mask = ""
+    $scopeId = ""
+
+    if ($opMask -eq "s" -or $opMask -eq "S") {
+        $primerOcteto = [int]($ipInicio.Split('.')[0])
+        if ($primerOcteto -le 126) { 
+            $mask = "255.0.0.0"; $scopeId = "$($ipInicio.Split('.')[0]).0.0.0"; $tipo = "Clase A"
+        } elseif ($primerOcteto -le 191) { 
+            $mask = "255.255.0.0"; $scopeId = "$($ipInicio.Split('.')[0]).$($ipInicio.Split('.')[1]).0.0"; $tipo = "Clase B"
+        } else { 
+            $mask = "255.255.255.0"; $scopeId = "$($ipInicio.Split('.')[0]).$($ipInicio.Split('.')[1]).$($ipInicio.Split('.')[2]).0"; $tipo = "Clase C"
+        }
+        Write-Host "[i] Calculado: $mask ($tipo)" -ForegroundColor Gray
+    } else {
+        $mask = pedir-ip "Ingrese la Mascara de Subred manualmente"
+        $oct = $ipInicio.Split('.')
+        $scopeId = "$($oct[0]).$($oct[1]).$($oct[2]).0" # ScopeId genérico
+    }
+
+    $gateway = pedir-ip "Gateway (Opcional - Enter para saltar)" $true
+    $dns     = pedir-ip "DNS (Opcional - Enter para saltar)" $true
+    
+    $segundos = Read-Host "Tiempo de Concesion (segundos, Enter=499)"
+    if ([string]::IsNullOrWhiteSpace($segundos)) { $segundos = 499 }
+    $leaseTime = New-TimeSpan -Seconds ([int]$segundos)
+
+    # Aplicar cambios
+    if (Cambiar-IP-Servidor -NuevaIP $ipInicio -Mascara $mask) {
+        try {
+            if (Get-DhcpServerv4Scope -ScopeId $scopeId -ErrorAction SilentlyContinue) {
+                Remove-DhcpServerv4Scope -ScopeId $scopeId -Force
+            }
+
+            Add-DhcpServerv4Scope -Name $nombre -StartRange $ipInicio -EndRange $ipFin -SubnetMask $mask -State Active -LeaseDuration $leaseTime
+            Add-DhcpServerv4ExclusionRange -ScopeId $scopeId -StartRange $ipInicio -EndRange $ipInicio
+
+            if ($gateway) { Set-DhcpServerv4OptionValue -ScopeId $scopeId -OptionId 3 -Value $gateway }
+            if ($dns)     { Set-DhcpServerv4OptionValue -ScopeId $scopeId -OptionId 6 -Value $dns -ErrorAction SilentlyContinue }
+
+            Set-DhcpServerv4Binding -InterfaceAlias $script:NombreInterfaz -BindingState $true
+            Restart-Service DHCPServer
+            Write-Host "`n[OK] DHCP configurado con exito." -ForegroundColor Green
+        } catch { Write-Host "Error DHCP: $($_.Exception.Message)" -ForegroundColor Red }
+
+        Write-Host "`n------------------------------------------------"
+        $op = Read-Host "Desea restaurar la IP ORIGINAL de Ethernet 2? (S/N)"
+        if ($op -eq "s" -or $op -eq "S") { Restaurar-IP-Original; Restart-Service DHCPServer }
+    }
+}
+
+function Eliminar-Ambito {
+    Clear-Host
+    Write-Host "===== ELIMINAR AMBITO =====" -ForegroundColor Yellow
+    $id = pedir-ip "Ingrese el ScopeId a eliminar (ej. 192.168.1.0)"
+    if ($id) {
+        try {
+            Remove-DhcpServerv4Scope -ScopeId $id -Force -ErrorAction Stop
+            Write-Host "Ambito $id eliminado." -ForegroundColor Green
+        } catch { Write-Host "Error: No se encontro el ambito." -ForegroundColor Red }
+    }
+}
+
+# ================= MENU PRINCIPAL =================
+
 do {
     Clear-Host
-    Write-Host "========================================"
-    Write-Host "   GESTOR DHCP - WINDOWS SERVER 2022"
-    Write-Host "========================================"
-    Write-Host "1. Instalar DHCP"
-    Write-Host "2. Verificar Estado "
-    Write-Host "3. Configurar DHCP"
-    Write-Host "4. Eliminar Ambito DHCP"
-    Write-Host "5. Monitorear DHCP"
-    Write-Host "6. Ver IP del Servidor"
-    Write-Host "7. Salir"
-    Write-Host "========================================"
+    Write-Host "=========================================="
+    Write-Host "    GESTOR DHCP - ETHERNET 2 (V.PRO)      "
+    Write-Host "=========================================="
+    Write-Host "1. Instalar Rol DHCP"
+    Write-Host "2. Configurar Ambito "
+    Write-Host "3. Verificar Estado General"
+    Write-Host "4. Monitorear Clientes "
+    Write-Host "5. Eliminar Ambito"
+    Write-Host "6. Ver Datos de Ethernet 2"
+    Write-Host "7. Restaurar IP Original del Host"
+    Write-Host "8. Salir"
+    Write-Host "=========================================="
 
-    $opcion = Read-Host "Opcion"
+    $opcion = Read-Host "Seleccione"
 
     switch ($opcion) {
-        "1" { Instalar-DHCP; Read-Host "Enter para continuar..." }
-        "2" { Verificar-DHCP; Read-Host "Enter para continuar..." }
-        "3" { Configurar-DHCP; Read-Host "Enter para continuar..." }
-        "4" { Eliminar-Scope; Read-Host "Enter para continuar..." }
-        "5" { Monitorear-DHCP }
-        "6" { Ver-IP-Servidor }
-        "7" { exit }
-        default { Write-Host "Opcion no valida"; Start-Sleep 2 }
+        "1" { Instalar-DHCP; Pause }
+        "2" { Configurar-DHCP; Pause }
+        "3" { 
+                Get-Service DHCPServer | Select-Object Status, Name
+                Get-DhcpServerv4Scope -ErrorAction SilentlyContinue | Format-Table Name, ScopeId, SubnetMask, State -AutoSize
+                Pause 
+            }
+        "4" { 
+                Write-Host "Monitoreo (Ctrl+C para salir)..."
+                try {
+                    while($true) {
+                        Clear-Host
+                        $scopes = Get-DhcpServerv4Scope -ErrorAction SilentlyContinue
+                        if (-not $scopes) { Write-Host "No hay ambitos activos."; break }
+                        foreach ($s in $scopes) {
+                            Write-Host "Ambito: $($s.ScopeId) ($($s.Name))" -ForegroundColor Cyan
+                            Get-DhcpServerv4Lease -ScopeId $s.ScopeId | Format-Table IPAddress, HostName, ClientId -AutoSize
+                        }
+                        Start-Sleep 5
+                    }
+                } catch { return }
+            }
+        "5" { Eliminar-Ambito; Pause }
+        "6" { Get-NetIPConfiguration -InterfaceAlias $script:NombreInterfaz | Format-List; Pause }
+        "7" { Restaurar-IP-Original; Pause }
+        "8" { exit }
     }
-
 } while ($true)
-
-
-
