@@ -87,26 +87,7 @@ function Cambiar-IP-Servidor {
     }
 }
 
-function Restaurar-IP-Original {
-    if ($null -eq $script:RespaldoRed) {
-        Write-Host "No hay datos de respaldo." -ForegroundColor Yellow
-        return
-    }
-    Write-Host "Restaurando IP original..." -ForegroundColor Cyan
-    try {
-        Get-NetIPAddress -InterfaceAlias $script:NombreInterfaz -AddressFamily IPv4 | Remove-NetIPAddress -Confirm:$false
-        $params = @{
-            InterfaceAlias = $script:NombreInterfaz
-            IPAddress      = $script:RespaldoRed.IPAddress
-            PrefixLength   = $script:RespaldoRed.PrefixLength
-            ErrorAction    = "Stop"
-        }
-        if ($null -ne $script:RespaldoRed.Gateway) { $params.Add("DefaultGateway", $script:RespaldoRed.Gateway) }
-        New-NetIPAddress @params
-        Write-Host "OK: Servidor restaurado." -ForegroundColor Green
-        $script:RespaldoRed = $null
-    } catch { Write-Host "Error al restaurar: $($_.Exception.Message)" -ForegroundColor Red }
-}
+
 
 # ================= MÓDULO DHCP =================
 
@@ -142,15 +123,16 @@ function Configurar-DHCP {
     $mask = "255.255.255.0"
     $scopeId = ($ipInicio.Split('.')[0..2] -join '.') + ".0"
     $gateway = pedir-ip "Gateway (Opcional - Enter para saltar)" $true
+    $dns1 = pedir-ip "DNS Primario"
+    $dns2 = pedir-ip "DNS Secundario (Opcional)" $true
 
     $segundos = Read-Host "Tiempo de Concesion (segundos, Enter=499)"
     if ([string]::IsNullOrWhiteSpace($segundos)) { $segundos = 499 }
     $leaseTime = New-TimeSpan -Seconds ([int]$segundos)
 
-    # CAMBIAR IP UNA SOLA VEZ
     Cambiar-IP-Servidor -NuevaIP $ipInicio -Mascara $mask
 
-    # ESPERAR A QUE WINDOWS APLIQUE IP
+    
     Start-Sleep -Seconds 3
 
     # ASEGURAR QUE DNS ESTE INICIADO
@@ -158,8 +140,7 @@ function Configurar-DHCP {
     Restart-Service DNS
     Start-Sleep -Seconds 3
 
-    # DNS AUTOMATICO
-    $dns = $ipInicio
+    
 
     try {
 
@@ -181,8 +162,18 @@ function Configurar-DHCP {
             Set-DhcpServerv4OptionValue -ScopeId $scopeId -OptionId 3 -Value $gateway
         }
 
-        # ASIGNAR DNS SIN VALIDACION ESTRICTA
-        Set-DhcpServerv4OptionValue -ScopeId $scopeId -OptionId 6 -Value $dns -Force
+       $dnsList = @()
+
+        if ($dns1) { $dnsList += $dns1 }
+        if ($dns2) { $dnsList += $dns2 }
+
+        if ($dnsList.Count -gt 0) {
+            Set-DhcpServerv4OptionValue `
+            -ScopeId $scopeId `
+            -OptionId 6 `
+            -Value $dnsList `
+            -Force
+        }
 
         Set-DhcpServerv4Binding -InterfaceAlias $script:NombreInterfaz -BindingState $true
 
@@ -402,7 +393,6 @@ function Mostrar-Menu-DHCP {
         Write-Host "4. Monitorear Clientes"
         Write-Host "5. Eliminar Ambito"
         Write-Host "6. Ver Datos de Ethernet 2"
-        Write-Host "7. Restaurar IP Original del Host"
         Write-Host "8. VOLVER AL MENU PRINCIPAL"
         Write-Host "=========================================="
         $op = Read-Host "Seleccione"
