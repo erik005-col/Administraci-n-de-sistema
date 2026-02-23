@@ -1,26 +1,23 @@
 # ===============================
 #   MAIN - PUNTO DE ENTRADA
 # ===============================
-
-# Cargar módulos externos
+#cargar modulo externos
 . "$PSScriptRoot\FuncionesBase.ps1"
 . "$PSScriptRoot\FuncionesDHCP.ps1"
 . "$PSScriptRoot\FuncionesDNS.ps1"
 . "$PSScriptRoot\FuncionesSSH.ps1"
-# ===============================
-#   MENÚ PRINCIPAL
-# ===============================
-
+#===============================
+# MENU PRINCIPAL
+#===============================
 do {
     Clear-Host
     Write-Host "======================================" -ForegroundColor Green
-    Write-Host "   SISTEMA DE ADMINISTRACION DE RED   " -ForegroundColor Green
-    Write-Host "======================================" -ForegroundColor Green
+    Write-Host "   SISTEMA DE ADMINISTRACION DE RED   "
+    Write-Host "======================================"
     Write-Host "1) Gestionar DHCP"
     Write-Host "2) Gestionar DNS"
     Write-Host "3) Instalar y Configurar SSH"
     Write-Host "4) Salir"
-    Write-Host "======================================"
 
     $op = Read-Host "Seleccione una opcion"
 
@@ -30,12 +27,9 @@ do {
 
         "2" { Mostrar-Menu-DNS }
 
-        "3" { 
-           
+        "3" { Instalar-SSH }
 
-        }
-
-        "4" { exit }
+        "4" { break }
 
         default {
             Write-Host "Opcion invalida." -ForegroundColor Red
