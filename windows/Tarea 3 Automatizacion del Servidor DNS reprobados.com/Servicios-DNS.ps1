@@ -2,8 +2,7 @@
 # GESTOR INTEGRAL DE SERVICIOS DE RED (DHCP & DNS) - VERSIÓN CORREGIDA
 # ========================================================================================
 
-# Variables Globales de Sesión
-$script:RespaldoRed = $null
+
 $script:NombreInterfaz = "Ethernet 2"
 
 # ================= FUNCIONES DE APOYO (IP) =================
@@ -103,89 +102,152 @@ function Instalar-DHCP {
 }
 
 function Configurar-DHCP {
-    if (-not (Get-WindowsFeature DHCP).Installed) {
-        Write-Host "Error: Instale el rol DHCP primero." -ForegroundColor Red
+      if ((Get-WindowsFeature DHCP).InstallState -ne "Installed") {
+        Write-Host "Error: Instale el servicio primero."
+        Read-Host "Enter..."
         return
     }
 
+    Write-Host "Interfaces disponibles:"
+    $adapters = Get-NetAdapter | Where-Object Status -eq "Up"
+    $adapters | Select-Object Name, InterfaceDescription, MacAddress | Format-Table -AutoSize
+    Write-Host "----------------------------------------"
+    
+    # 1. Seleccionar Interfaz
+    while ($true) {
+        $ifaceName = Read-Host "1. Nombre exacto del Adaptador de red (ej. Ethernet)"
+        if (Get-NetAdapter -Name $ifaceName -ErrorAction SilentlyContinue) { break }
+        Write-Host " [!] La interfaz no existe." -ForegroundColor Red
+    }
+
+    $scopeName = Read-Host "2. Nombre del Ambito"
+
+    # 3. Rango Inicial (IP del Servidor)
+    while ($true) {
+        $ipInicio = Read-Host "3. Rango inicial (IP Servidor)"
+        if (Validar-IP $ipInicio) { break }
+        Write-Host " [!] IP invalida" -ForegroundColor Red
+    }
+
+    # Calculos de red
+    $ipObj = [System.Net.IPAddress]::Parse($ipInicio)
+    $bytes = $ipObj.GetAddressBytes()
+    # Aumentar el ultimo octeto en 1 para el inicio del pool
+    $poolStartLastOctet = [int]$bytes[3] + 1
+    $poolStart = "{0}.{1}.{2}.{3}" -f $bytes[0], $bytes[1], $bytes[2], $poolStartLastOctet
+    $prefix = "{0}.{1}.{2}" -f $bytes[0], $bytes[1], $bytes[2]
+    
+    $subnetID = "$($prefix).0"
+
+    # 4. Rango Final
+    while ($true) {
+        $ipFin = Read-Host "4. Rango final ($prefix.X)"
+        if (-not (Validar-IP $ipFin)) { continue }
+        
+        if (-not $ipFin.StartsWith($prefix)) {
+            Write-Host " [!] La IP debe estar en el segmento $prefix.x" -ForegroundColor Red
+            continue
+        }
+        
+        # Validar que fin > inicio
+        $finLast = [int]$ipFin.Split('.')[3]
+        if ($poolStartLastOctet -le $finLast) { break }
+        Write-Host " [!] El rango final debe ser mayor a $poolStart" -ForegroundColor Red
+    }
+
+    # 5. Gateway
+    while ($true) {
+        $gateway = Read-Host "5. Gateway (Enter para omitir)"
+        # Permitimos vacio (break)
+        if ([string]::IsNullOrWhiteSpace($gateway)) { break }
+        
+        if (Validar-IP $gateway) {
+            if ($gateway.StartsWith($prefix)) { break }
+            Write-Host " [!] El Gateway debe pertenecer a la red $prefix.x" -ForegroundColor Red
+        } else {
+             Write-Host " [!] IP invalida" -ForegroundColor Red
+        }
+    }
+
+    # 6. DNS
+    $dns = Read-Host "6. DNS (Enter para omitir)"
+    if (-not [string]::IsNullOrWhiteSpace($dns)) {
+        if (-not (Validar-IP $dns)) { $dns = $null; Write-Host "DNS invalido, omitiendo." }
+    }
+
+    # 7. Tiempo de concesion
+    while ($true) {
+        $leaseTimeStr = Read-Host "7. Tiempo de concesion (segundos)"
+        if ($leaseTimeStr -match "^\d+$") { break }
+        Write-Host " [!] Debe ser un numero entero." -ForegroundColor Red
+    }
+    $leaseTimeSpan = New-TimeSpan -Seconds $leaseTimeStr
+
+    # --- RESUMEN ---
     Clear-Host
-    Write-Host "===== CONFIGURACION DE AMBITO =====" -ForegroundColor Cyan
+    Write-Host "========================================"
+    Write-Host "        RESUMEN DE CONFIGURACION"
+    Write-Host "========================================"
+    Write-Host "1- Adaptador:       $ifaceName"
+    Write-Host "2- Ambito:          $scopeName"
+    Write-Host "3- IP Servidor:     $ipInicio"
+    Write-Host "4- Pool DHCP:       $poolStart - $ipFin"
+    Write-Host "5- Gateway:         $($gateway)"
+    Write-Host "6- DNS:             $($dns)"
+    Write-Host "7- Concesion:       $leaseTimeStr segundos"
+    Write-Host "========================================"
+    $confirm = Read-Host "Confirmar configuracion (S/N)"
 
-    $nombre   = Read-Host "Nombre del ambito"
-    $ipInicio = pedir-ip "IP del Servidor (IP fija del servidor)"
-    $ipFin    = pedir-ip "IP Final del rango"
+    if ($confirm -ne "s") { Write-Host "Cancelado."; return }
 
-    if ((ip-a-entero $ipInicio) -ge (ip-a-entero $ipFin)) {
-        Write-Host "Error: Rango invalido." -ForegroundColor Red
-        return
-    }
-
-    $mask = "255.255.255.0"
-    $scopeId = ($ipInicio.Split('.')[0..2] -join '.') + ".0"
-    $gateway = pedir-ip "Gateway (Opcional - Enter para saltar)" $true
-    $dns1 = pedir-ip "DNS Primario"
-    $dns2 = pedir-ip "DNS Secundario (Opcional)" $true
-
-    $segundos = Read-Host "Tiempo de Concesion (segundos, Enter=499)"
-    if ([string]::IsNullOrWhiteSpace($segundos)) { $segundos = 499 }
-    $leaseTime = New-TimeSpan -Seconds ([int]$segundos)
-
-    Cambiar-IP-Servidor -NuevaIP $ipInicio -Mascara $mask
-
-    
-    Start-Sleep -Seconds 3
-
-    # ASEGURAR QUE DNS ESTE INICIADO
-    Start-Service DNS -ErrorAction SilentlyContinue
-    Restart-Service DNS
-    Start-Sleep -Seconds 3
-
-    
-
+    # --- APLICACION DE CAMBIOS ---
+    Write-Host "Configurando IP estatica en $ifaceName..." -ForegroundColor Cyan
     try {
-
-        if (Get-DhcpServerv4Scope -ScopeId $scopeId -ErrorAction SilentlyContinue) {
-            Remove-DhcpServerv4Scope -ScopeId $scopeId -Force
+        # Quitar IP anterior (si es dinamica o estatica vieja)
+        Remove-NetIPAddress -InterfaceAlias $ifaceName -AddressFamily IPv4 -Confirm:$false -ErrorAction SilentlyContinue
+        
+        # --- SOLUCION DEL ERROR ---
+        # Validamos si $gateway tiene texto o esta vacio para ejecutar el comando correcto
+        if ([string]::IsNullOrWhiteSpace($gateway)) {
+            # Opcion A: Sin Gateway
+            New-NetIPAddress -InterfaceAlias $ifaceName -IPAddress $ipInicio -PrefixLength 24 -Confirm:$false
+        } else {
+            # Opcion B: Con Gateway
+            New-NetIPAddress -InterfaceAlias $ifaceName -IPAddress $ipInicio -PrefixLength 24 -DefaultGateway $gateway -Confirm:$false
         }
 
-        Add-DhcpServerv4Scope `
-            -Name $nombre `
-            -StartRange $ipInicio `
-            -EndRange $ipFin `
-            -SubnetMask $mask `
-            -State Active `
-            -LeaseDuration $leaseTime
-
-        Add-DhcpServerv4ExclusionRange -ScopeId $scopeId -StartRange $ipInicio -EndRange $ipInicio
-
-        if ($gateway) {
-            Set-DhcpServerv4OptionValue -ScopeId $scopeId -OptionId 3 -Value $gateway
-        }
-
-       $dnsList = @()
-
-        if ($dns1) { $dnsList += $dns1 }
-        if ($dns2) { $dnsList += $dns2 }
-
-        if ($dnsList.Count -gt 0) {
-            Set-DhcpServerv4OptionValue `
-            -ScopeId $scopeId `
-            -OptionId 6 `
-            -Value $dnsList `
-            -Force
-        }
-
-        Set-DhcpServerv4Binding -InterfaceAlias $script:NombreInterfaz -BindingState $true
-
-        Restart-Service DHCPServer
-
-        Write-Host "DHCP configurado con exito." -ForegroundColor Green
-
+        if ($dns) { Set-DnsClientServerAddress -InterfaceAlias $ifaceName -ServerAddresses $dns }
     } catch {
-        Write-Host "Error DHCP: $($_.Exception.Message)" -ForegroundColor Red
+        Write-Host "Nota: Error ajustando IP (quizas ya esta asignada), continuando..." -ForegroundColor Yellow
+        Write-Host $_.Exception.Message
     }
+    Start-Sleep -Seconds 2
+
+    Write-Host "Configurando Servicio DHCP..." -ForegroundColor Cyan
+    try {
+        # Limpiar ambitos anteriores si existen
+        Get-DhcpServerv4Scope | Remove-DhcpServerv4Scope -Force -ErrorAction SilentlyContinue
+
+        # Crear nuevo ambito
+        Add-DhcpServerv4Scope -Name $scopeName -StartRange $poolStart -EndRange $ipFin -SubnetMask 255.255.255.0 -State Active -LeaseDuration $leaseTimeSpan
+
+        # Configurar Opciones (Router = ID 3, DNS = ID 6)
+        # Aquí verificamos de nuevo si $gateway existe antes de agregarlo como opción DHCP
+        if (-not [string]::IsNullOrWhiteSpace($gateway)) { 
+            Set-DhcpServerv4OptionValue -ScopeId $subnetID -OptionId 3 -Value $gateway 
+        }
+        
+        if ($dns) { Set-DhcpServerv4OptionValue -ScopeId $subnetID -OptionId 6 -Value $dns -Force}
+
+        Restart-Service DhcpServer -Force
+        Write-Host "[EXITO] Servicio configurado y activo." -ForegroundColor Green
+    } catch {
+        Write-Host "[ERROR] Fallo la configuracion DHCP:" -ForegroundColor Red
+        Write-Host $_.Exception.Message
+    }
+    Read-Host "Presione Enter..."
 }
-function Eliminar-Ambito {
+    function Eliminar-Ambito {
     Clear-Host
     Write-Host "===== ELIMINAR AMBITO =====" -ForegroundColor Yellow
     $id = pedir-ip "Ingrese el ScopeId a eliminar (ej. 192.168.1.0)"
@@ -278,8 +340,12 @@ function Instalar-DNS {
 
 function Nuevo-Dominio {
 
-    Clear-Host
-    $dominio = Read-Host "Ingrese el nombre del dominio: "
+ Clear-Host
+
+    # ==============================
+    # 1. Solicitar nombre de dominio
+    # ==============================
+    $dominio = Read-Host "Ingrese el nombre del dominio"
 
     if ([string]::IsNullOrWhiteSpace($dominio)) {
         Write-Host "Dominio invalido." -ForegroundColor Red
@@ -287,43 +353,65 @@ function Nuevo-Dominio {
         return
     }
 
-    # Detectar IP automáticamente (red interna)
-    $ipServidor = (Get-NetIPAddress -AddressFamily IPv4 `
-        | Where-Object { $_.IPAddress -notlike "169.*" -and $_.IPAddress -ne "127.0.0.1" } `
-        | Select-Object -First 1).IPAddress
-
-    if (-not $ipServidor) {
-        Write-Host "No se pudo detectar IP." -ForegroundColor Red
-        Pause
-        return
-    }
-
+    # ==============================
+    # 2. Validar si ya existe la zona
+    # ==============================
     if (Get-DnsServerZone -Name $dominio -ErrorAction SilentlyContinue) {
         Write-Host "El dominio ya existe." -ForegroundColor Yellow
         Pause
         return
     }
 
-    Write-Host "Creando zona DNS..."
+    # ==============================
+    # 3. Solicitar IP manualmente
+    # ==============================
+    do {
+        $ipServidor = Read-Host "Ingrese la direccion IP que se asociara al dominio"
 
-    Add-DnsServerPrimaryZone -Name $dominio -ZoneFile "$dominio.dns"
+        $valida = -not [string]::IsNullOrWhiteSpace($ipServidor) -and (Validar-IP $ipServidor)
 
-    Add-DnsServerResourceRecordA `
-        -ZoneName $dominio `
-        -Name "@" `
-        -IPv4Address $ipServidor
+        if (-not $valida) {
+            Write-Host "Debe ingresar una direccion IP valida." -ForegroundColor Red
+        }
 
-    Add-DnsServerResourceRecordA `
-        -ZoneName $dominio `
-        -Name "www" `
-        -IPv4Address $ipServidor
+    } until ($valida)
 
-    Write-Host "Dominio creado correctamente." -ForegroundColor Green
-    Write-Host "IP asociada: $ipServidor"
+    # ==============================
+    # 4. Crear zona DNS
+    # ==============================
+    try {
+
+        Write-Host "Creando zona DNS..."
+
+        Add-DnsServerPrimaryZone `
+            -Name $dominio `
+            -ZoneFile "$dominio.dns" `
+            -ErrorAction Stop
+
+        # Registro A raiz (@)
+        Add-DnsServerResourceRecordA `
+            -ZoneName $dominio `
+            -Name "@" `
+            -IPv4Address $ipServidor `
+            -ErrorAction Stop
+
+        # Registro A www
+        Add-DnsServerResourceRecordA `
+            -ZoneName $dominio `
+            -Name "www" `
+            -IPv4Address $ipServidor `
+            -ErrorAction Stop
+
+        Write-Host "Dominio creado correctamente." -ForegroundColor Green
+        Write-Host "IP asociada: $ipServidor"
+
+    }
+    catch {
+        Write-Host "Error al crear el dominio: $($_.Exception.Message)" -ForegroundColor Red
+    }
 
     Pause
 }
-
 function Borrar-Dominio {
 
     $dominio = Read-Host "Ingrese el dominio a eliminar"
