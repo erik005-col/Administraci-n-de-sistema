@@ -51,9 +51,7 @@ validar_ip_utilizable() {
 estado_servicio() {
     while true; do
         clear
-        echo "----------------------------------------"
-        echo "        ESTADO DEL SERVICIO DHCP"
-        echo "----------------------------------------"
+        
 
         if ! rpm -q kea &> /dev/null; then
             echo -e "${RED}[!] El paquete 'kea' NO está instalado.${NC}"
@@ -113,9 +111,9 @@ estado_servicio() {
 
 # --- 2. INSTALACION (SILENCIOSA) ---
 instalar_servicio() {
-    echo "----------------------------------------"
+    
     echo "        INSTALACIÓN DEL SERVICIO"
-    echo "----------------------------------------"
+    
 
     if rpm -q kea &> /dev/null; then
         echo "El servicio ya está instalado."
@@ -141,9 +139,8 @@ instalar_servicio() {
 # --- 4. CONFIGURACION DHCP ---
 configurar_servicio() {
     clear
-    echo "========================================"
-    echo "   CONFIGURACION DE DHCP"
-    echo "========================================"
+    
+    
 
     if ! rpm -q kea &> /dev/null; then
         echo "Error: Instale el servicio primero."
@@ -169,10 +166,10 @@ configurar_servicio() {
 
     # --- RANGO INICIAL (IP DEL SERVIDOR) ---
     while true; do
-        read -p "3. Rango inicial (IP Servidor): " IP_INICIO
+        read -p "3. Rango inicial: " IP_INICIO
         # Validamos usando la nueva lógica
         if validar_ip_utilizable "$IP_INICIO"; then break; fi
-        echo -e "${RED}   [!] IP inválida o reservada.${NC}"
+        echo -e "${RED}   [!] IP inválida${NC}"
     done
 
     PREFIX=$(echo "$IP_INICIO" | cut -d'.' -f1-3)
@@ -227,7 +224,7 @@ configurar_servicio() {
         fi
     done
 
-    read -p "6. DNS (Enter para omitir): " DNS_SERVER
+    DNS_SERVER="$IP_INICIO"
     if [ -n "$DNS_SERVER" ] && ! validar_formato_ip "$DNS_SERVER"; then
         echo "   [!] DNS inválido, se omitirá."
         DNS_SERVER=""
@@ -246,12 +243,11 @@ configurar_servicio() {
     echo "========================================"
     echo "1- Adaptador de red:    $INTERFAZ"
     echo "2- Nombre del ambito:   $SCOPE_NAME"
-    echo "3- Rango inicial (srv): $IP_INICIO"
+    echo "3- Rango inicial:       $IP_INICIO"
     echo "4- Rango final:         $IP_FIN"
-    echo "   -> Pool DHCP real:   $POOL_START a $IP_FIN"
-    
+
     if [ -z "$GATEWAY" ]; then
-        echo "5- GateWay:             (Ninguno)"
+        echo "5- GateWay:"
     else
         echo "5- GateWay:             $GATEWAY"
     fi
@@ -433,21 +429,16 @@ instalar_dns() {
     read -p "Enter..."
 }
 
-#Función para crear un dominio
+
 nuevo_dominio() {
 
-    read -p "Ingrese el nombre del dominio (ej: reprobados.com): " DOMINIO
+       read -p "Ingrese el nombre del dominio (ej: cocacola.com): " DOMINIO
 
     if [ -z "$DOMINIO" ]; then
         echo "Dominio inválido."
         sleep 2
         return
     fi
-
-    
-    read -p "Ingrese la interfaz de red interna (ej: enp0s8): " INTERFAZ_DNS
-    IP_SERVIDOR=$(ip -4 addr show "$INTERFAZ_DNS" | grep inet | awk '{print $2}' | cut -d/ -f1)
-    ZONA_FILE="/var/named/$DOMINIO.zone"
 
     # Verificar si ya existe
     if grep -q "zone \"$DOMINIO\"" /etc/named.conf; then
@@ -456,46 +447,57 @@ nuevo_dominio() {
         return
     fi
 
+    # Asociar direccion al dominio
+    while true; do
+        read -p "Ingrese la dirección IP para el dominio: " IP_DOMINIO
+
+        if [[ $IP_DOMINIO =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+            break
+        else
+            echo "Formato de IP inválido."
+        fi
+    done
+
+    ZONA_FILE="/var/named/$DOMINIO.zone"
+
     echo "Creando zona DNS..."
 
-    # Agregar zona a named.conf
+
     cat <<EOF >> /etc/named.conf
 
-zone "$DOMINIO" IN {
+ zone "$DOMINIO" IN {
     type master;
     file "$ZONA_FILE";
 };
 EOF
 
-    # Crear archivo de zona
+
     cat <<EOF > $ZONA_FILE
 \$TTL 86400
 @   IN  SOA ns1.$DOMINIO. admin.$DOMINIO. (
-        2026021701
+        $(date +%Y%m%d%H)
         3600
         1800
         604800
         86400 )
 
 @       IN  NS      ns1.$DOMINIO.
-ns1     IN  A       $IP_SERVIDOR
-@       IN  A       $IP_SERVIDOR
-www     IN  A       $IP_SERVIDOR
+ns1     IN  A       $IP_DOMINIO
+@       IN  A       $IP_DOMINIO
+www     IN  A       $IP_DOMINIO
 EOF
 
     chown named:named $ZONA_FILE
     chmod 640 $ZONA_FILE
 
-    firewall-cmd --add-service=dns --permanent &> /dev/null
-    firewall-cmd --reload &> /dev/null
 
     systemctl restart named
 
     if systemctl is-active --quiet named; then
-        echo -e "${GREEN}[EXITO] Dominio $DOMINIO creado correctamente.${NC}"
-        echo "IP asociada: $IP_SERVIDOR"
+        echo "[EXITO] Dominio $DOMINIO creado correctamente."
+        echo "IP asociada: $IP_DOMINIO"
     else
-        echo -e "${RED}[ERROR] named no pudo iniciar.${NC}"
+        echo "[ERROR] named no pudo iniciar."
     fi
 
     read -p "Enter..."
@@ -527,11 +529,8 @@ borrar_dominio() {
 
 #Función para consultar un dominio
 consultar_dominio() {
-
     clear
-    echo "========================================"
-    echo "         CONSULTAR DOMINIO"
-    echo "========================================"
+
 
     # Obtener lista de dominios definidos
     DOMINIOS=($(grep -oP 'zone\s+"\K[^"]+' /etc/named.conf))
