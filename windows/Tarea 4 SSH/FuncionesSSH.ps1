@@ -1,7 +1,6 @@
 # ===============================
 #   MODULO SSH - WINDOWS SERVER
 # ===============================
-
 function Install-SSHService {
     Write-Host "Iniciando configuracion de SSH..." -ForegroundColor Cyan
 

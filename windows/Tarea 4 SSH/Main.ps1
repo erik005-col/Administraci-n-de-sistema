@@ -3,11 +3,10 @@
 # ===============================
 
 # Cargar módulos externos
-. .\FuncionesBase.ps1
-. .\FuncionesDHCP.ps1
-. .\FuncionesDNS.ps1
-. .\FuncionesSSH.ps1
-
+. "$PSScriptRoot\FuncionesBase.ps1"
+. "$PSScriptRoot\FuncionesDHCP.ps1"
+. "$PSScriptRoot\FuncionesDNS.ps1"
+. "$PSScriptRoot\FuncionesSSH.ps1"
 # ===============================
 #   MENÚ PRINCIPAL
 # ===============================
@@ -32,8 +31,8 @@ do {
         "2" { Mostrar-Menu-DNS }
 
         "3" { 
-            Install-SSHService
-            Pause
+           
+
         }
 
         "4" { exit }
