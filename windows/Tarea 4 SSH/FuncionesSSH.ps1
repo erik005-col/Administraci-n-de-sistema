@@ -4,34 +4,23 @@
 
 function Install-SSHService {
 
-    Write-Host "Verificando OpenSSH Server..." -ForegroundColor Cyan
+  $ssh = Get-Service -Name sshd -ErrorAction SilentlyContinue
 
-    $ssh = Get-WindowsCapability -Online | Where-Object Name -like 'OpenSSH.Server*'
-
-    if ($ssh.State -ne "Installed") {
-        Write-Host "Instalando OpenSSH Server..." -ForegroundColor Yellow
-        Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0
-    }
-    else {
-        Write-Host "OpenSSH ya esta instalado." -ForegroundColor Green
+    if (-not $ssh) {
+        Write-Host "OpenSSH no está instalado. Instálelo desde Server Manager si no hay internet." -ForegroundColor Red
+        return
     }
 
-    Write-Host "Configurando servicio SSH..." -ForegroundColor Yellow
-
-    Start-Service sshd -ErrorAction SilentlyContinue
+    Start-Service sshd
     Set-Service -Name sshd -StartupType Automatic
 
-    Write-Host "Configurando Firewall (Puerto 22)..." -ForegroundColor Yellow
-
-    if (-not (Get-NetFirewallRule -Name "sshd" -ErrorAction SilentlyContinue)) {
+    if (-not (Get-NetFirewallRule -DisplayName "SSH-Port-22" -ErrorAction SilentlyContinue)) {
         New-NetFirewallRule `
-            -Name "sshd" `
-            -DisplayName "OpenSSH Server (sshd)" `
-            -Enabled True `
+            -DisplayName "SSH-Port-22" `
             -Direction Inbound `
             -Protocol TCP `
-            -Action Allow `
-            -LocalPort 22
+            -LocalPort 22 `
+            -Action Allow
     }
 
     Write-Host "SSH configurado correctamente." -ForegroundColor Green
