@@ -233,7 +233,6 @@ consultar_dominio() {
     echo "----------------------------------------"
     read -p "Enter..."
 }
-
 limpiar_sistema() {
     clear
     echo "========================================"
@@ -243,14 +242,20 @@ limpiar_sistema() {
     # Limpia DHCP (Kea)
     echo "1. Limpiando concesiones DHCP..."
     sudo systemctl stop kea-dhcp4 &> /dev/null
-    sudo rm -f /var/lib/kea/kea-leases4.csv  # El -f evita errores si no existe
+    sudo rm -f /var/lib/kea/kea-leases4.csv
     sudo systemctl start kea-dhcp4
     
     # Limpia DNS (Bind)
     echo "2. Vaciando caché de BIND DNS..."
-    sudo rndc flush || sudo systemctl restart named  # rndc flush es el comando correcto para BIND
+    sudo rndc flush || sudo systemctl restart named
     
-    echo "3. Limpiando caché del sistema menu_dns() {
+    echo "3. Limpiando caché del sistema Linux..."
+    sudo resolvectl flush-caches &> /dev/null || echo "Resolvectl no disponible, omitiendo..."
+    
+    echo -e "\n${GREEN}[OK] Caché de servicios limpia correctamente.${NC}"
+    echo -e "${CYAN}Nota: Recuerda ejecutar 'ipconfig /flushdns' en tu cliente Windows.${NC}"
+    read -p "Presione Enter para volver..."
+} 
 while true; do
 clear
 echo -e "${MAGENTA}GESTOR DNS${NC}"
