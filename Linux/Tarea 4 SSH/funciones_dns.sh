@@ -256,30 +256,25 @@ limpiar_sistema() {
     echo -e "${CYAN}Nota: Recuerda ejecutar 'ipconfig /flushdns' en tu cliente Windows.${NC}"
     read -p "Presione Enter para volver..."
 } 
-while true; do
-clear
-echo -e "${MAGENTA}GESTOR DNS${NC}"
-echo "1) Estado"
-echo "2) Instalar"
-echo "3) Nuevo Dominio"
-echo "4) Borrar Dominio"
-echo "5) Consultar Dominio"
-echo "6) Volver"
-read -p "Seleccione: " op
-case $op in
-1) estado_dns ;;
-2) instalar_dns ;;
-3) nuevo_dominio ;;
-4) borrar_dominio ;;
-5) consultar_dominio ;;
-6) break ;;
-esac
-done
-}Linux..."
-    sudo resolvectl flush-caches &> /dev/null || echo "Resolvectl no disponible, omitiendo..."
-    
-    echo -e "\n${GREEN}[OK] Caché de servicios limpia correctamente.${NC}"
-    echo -e "${CYAN}Nota: Recuerda ejecutar 'ipconfig /flushdns' en tu cliente Windows.${NC}"
-    read -p "Presione Enter para volver..."
+# Al final de funciones_dns.sh, asegúrate de que el menú esté así:
+menu_dns() {
+    while true; do
+        clear
+        echo -e "${MAGENTA}GESTOR DNS${NC}"
+        echo "1) Estado"
+        echo "2) Instalar"
+        echo "3) Nuevo Dominio"
+        echo "4) Borrar Dominio"
+        echo "5) Consultar Dominio"
+        echo "6) Volver"
+        read -p "Seleccione: " op
+        case $op in
+            1) estado_dns ;;
+            2) instalar_dns ;;
+            3) nuevo_dominio ;;
+            4) borrar_dominio ;;
+            5) consultar_dominio ;;
+            6) break ;;
+        esac
+    done
 }
-
