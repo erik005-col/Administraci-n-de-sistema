@@ -4,10 +4,10 @@
 # =====================================================
 
 # Cargar bibliotecas
-source ./lib/funciones_util.sh
-source ./lib/funciones_dhcp.sh
-source ./lib/funciones_dns.sh
-source ./lib/funciones_ssh.sh
+source ./funciones_util.sh
+source ./funciones_dhcp.sh
+source ./funciones_dns.sh
+source ./funciones_ssh.sh
 
 # Validaciones iniciales
 verificar_root

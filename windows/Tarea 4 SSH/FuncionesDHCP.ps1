@@ -1,7 +1,6 @@
 # ========================================================================================
 # GESTOR INTEGRAL DE SERVICIOS DE RED (DHCP & DNS) - VERSIÓN CORREGIDA
 # ========================================================================================
-
 # Variables Globales de Sesión
 $script:RespaldoRed = $null
 $script:NombreInterfaz = "Ethernet 2"

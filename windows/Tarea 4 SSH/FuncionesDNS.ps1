@@ -76,8 +76,12 @@ function Instalar-DNS {
 
 function Nuevo-Dominio {
 
-    Clear-Host
-    $dominio = Read-Host "Ingrese el nombre del dominio: "
+   Clear-Host
+
+    # ==============================
+    # 1. Solicitar nombre de dominio
+    # ==============================
+    $dominio = Read-Host "Ingrese el nombre del dominio"
 
     if ([string]::IsNullOrWhiteSpace($dominio)) {
         Write-Host "Dominio invalido." -ForegroundColor Red
@@ -85,42 +89,71 @@ function Nuevo-Dominio {
         return
     }
 
-    # Detectar IP automáticamente (red interna)
-    $ipServidor = (Get-NetIPAddress -AddressFamily IPv4 `
-        | Where-Object { $_.IPAddress -notlike "169.*" -and $_.IPAddress -ne "127.0.0.1" } `
-        | Select-Object -First 1).IPAddress
-
-    if (-not $ipServidor) {
-        Write-Host "No se pudo detectar IP." -ForegroundColor Red
-        Pause
-        return
-    }
-
+    # ==============================
+    # 2. Validar si ya existe la zona
+    # ==============================
     if (Get-DnsServerZone -Name $dominio -ErrorAction SilentlyContinue) {
         Write-Host "El dominio ya existe." -ForegroundColor Yellow
         Pause
         return
     }
 
-    Write-Host "Creando zona DNS..."
+    # ==============================
+    # 3. Solicitar IP manualmente
+    # ==============================
+    do {
+        $ipServidor = Read-Host "Ingrese la direccion IP que se asociara al dominio"
 
-    Add-DnsServerPrimaryZone -Name $dominio -ZoneFile "$dominio.dns"
+        $valida = -not [string]::IsNullOrWhiteSpace($ipServidor) -and (Validar-IP $ipServidor)
 
-    Add-DnsServerResourceRecordA `
-        -ZoneName $dominio `
-        -Name "@" `
-        -IPv4Address $ipServidor
+        if (-not $valida) {
+            Write-Host "Debe ingresar una direccion IP valida." -ForegroundColor Red
+        }
 
-    Add-DnsServerResourceRecordA `
-        -ZoneName $dominio `
-        -Name "www" `
-        -IPv4Address $ipServidor
+    } until ($valida)
 
-    Write-Host "Dominio creado correctamente." -ForegroundColor Green
-    Write-Host "IP asociada: $ipServidor"
+    # ==============================
+    # 4. Crear zona DNS
+    # ==============================
+    try {
+
+        Write-Host "Creando zona DNS..."
+
+        Add-DnsServerPrimaryZone `
+            -Name $dominio `
+            -ZoneFile "$dominio.dns" `
+            -ErrorAction Stop
+
+        # Registro A raiz (@)
+        Add-DnsServerResourceRecordA `
+            -ZoneName $dominio `
+            -Name "@" `
+            -IPv4Address $ipServidor `
+            -ErrorAction Stop
+
+        # Registro A www
+        Add-DnsServerResourceRecordA `
+            -ZoneName $dominio `
+            -Name "www" `
+            -IPv4Address $ipServidor `
+            -ErrorAction Stop
+
+        Write-Host "Dominio creado correctamente." -ForegroundColor Green
+        Write-Host "IP asociada: $ipServidor"
+
+    }
+    catch {
+        Write-Host "Error al crear el dominio: $($_.Exception.Message)" -ForegroundColor Red
+    }
 
     Pause
 }
+
+
+
+
+
+
 
 function Borrar-Dominio {
 

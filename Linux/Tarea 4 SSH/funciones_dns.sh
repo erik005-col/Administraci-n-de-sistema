@@ -1,6 +1,6 @@
 #!/bin/bash
 # =====================================================
-# DNS
+# DNS - CORREGIDO
 # =====================================================
 
 estado_dns() {
@@ -55,13 +55,8 @@ estado_dns() {
                     sleep 2
                 fi
                 ;;
-            3)
-                return
-                ;;
-            *)
-                echo "Opción no válida."
-                sleep 1
-                ;;
+            3) return ;;
+            *) echo "Opción no válida."; sleep 1 ;;
         esac
     done
 }
@@ -91,26 +86,19 @@ instalar_dns() {
 
 
 nuevo_dominio() {
-
-       read -p "Ingrese el nombre del dominio (ej: cocacola.com): " DOMINIO
-
+    read -p "Ingrese el nombre del dominio (ej: cocacola.com): " DOMINIO
     if [ -z "$DOMINIO" ]; then
-        echo "Dominio inválido."
-        sleep 2
-        return
+        echo "Dominio inválido."; sleep 2; return
     fi
 
-    # Verificar si ya existe
+    # Verificar si ya existe en named.conf
     if grep -q "zone \"$DOMINIO\"" /etc/named.conf; then
-        echo "El dominio ya existe."
-        sleep 2
-        return
+        echo "El dominio ya existe."; sleep 2; return
     fi
 
-    # Asociar direccion al dominio
+    # Función para instalar el servicio DNS
     while true; do
         read -p "Ingrese la dirección IP para el dominio: " IP_DOMINIO
-
         if [[ $IP_DOMINIO =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
             break
         else
@@ -122,16 +110,15 @@ nuevo_dominio() {
 
     echo "Creando zona DNS..."
 
-
+    # Agregamos la zona al final de named.conf
     cat <<EOF >> /etc/named.conf
-
- zone "$DOMINIO" IN {
+zone "$DOMINIO" IN {
     type master;
     file "$ZONA_FILE";
 };
 EOF
 
-
+    # Crear el archivo de zona
     cat <<EOF > $ZONA_FILE
 \$TTL 86400
 @   IN  SOA ns1.$DOMINIO. admin.$DOMINIO. (
@@ -149,15 +136,17 @@ EOF
 
     chown named:named $ZONA_FILE
     chmod 640 $ZONA_FILE
-
+    
+    # IMPORTANTE: Aplicar contexto SELinux para que BIND pueda leerlo
+    restorecon -v $ZONA_FILE &> /dev/null
 
     systemctl restart named
 
     if systemctl is-active --quiet named; then
         echo "[EXITO] Dominio $DOMINIO creado correctamente."
-        echo "IP asociada: $IP_DOMINIO"
+
     else
-        echo "[ERROR] named no pudo iniciar."
+        echo "[ERROR] named no pudo iniciar. Verifique named.conf."
     fi
 
     read -p "Enter..."
@@ -170,12 +159,10 @@ borrar_dominio() {
     ZONA_FILE="/var/named/$DOMINIO.zone"
 
     if ! grep -q "zone \"$DOMINIO\"" /etc/named.conf; then
-        echo "El dominio no existe."
-        sleep 2
-        return
+        echo "El dominio no existe."; sleep 2; return
     fi
 
-    # Eliminar bloque de zona
+    # Eliminar bloque de zona de forma segura
     sed -i "/zone \"$DOMINIO\"/,/};/d" /etc/named.conf
 
     # Eliminar archivo de zona
@@ -187,76 +174,59 @@ borrar_dominio() {
     read -p "Enter..."
 }
 
-#Función para consultar un dominio
 consultar_dominio() {
     clear
-
-
-    # Obtener lista de dominios definidos
     DOMINIOS=($(grep -oP 'zone\s+"\K[^"]+' /etc/named.conf))
 
     if [ ${#DOMINIOS[@]} -eq 0 ]; then
-        echo "No hay dominios configurados."
-        read -p "Enter..."
-        return
+        echo "No hay dominios configurados."; read -p "Enter..."; return
     fi
 
     echo "Dominios disponibles:"
-    echo "----------------------------------------"
-
-    # Mostrar lista numerada
     for i in "${!DOMINIOS[@]}"; do
         echo "$((i+1))) ${DOMINIOS[$i]}"
     done
 
-    echo "----------------------------------------"
     read -p "Seleccione un dominio: " opcion
-
-    # Validar selección
     if ! [[ "$opcion" =~ ^[0-9]+$ ]] || [ "$opcion" -lt 1 ] || [ "$opcion" -gt ${#DOMINIOS[@]} ]; then
-        echo "Selección inválida."
-        sleep 2
-        return
+        echo "Selección inválida."; sleep 2; return
     fi
 
     DOMINIO_SELECCIONADO=${DOMINIOS[$((opcion-1))]}
-
+    
     clear
     echo "========================================"
     echo "Dominio seleccionado: $DOMINIO_SELECCIONADO"
     echo "========================================"
 
-    # Mostrar IP asociada
-    echo "Direccion IP asociada al dominio:"
     dig @localhost +short "$DOMINIO_SELECCIONADO"
-
-    echo "----------------------------------------"
     read -p "Enter..."
 }
+
 limpiar_sistema() {
     clear
     echo "========================================"
     echo "       LIMPIANDO CACHÉ DE RED"
     echo "========================================"
-    
-    # Limpia DHCP (Kea)
+
+    # Limpia DHCP (Kea) 
     echo "1. Limpiando concesiones DHCP..."
     sudo systemctl stop kea-dhcp4 &> /dev/null
     sudo rm -f /var/lib/kea/kea-leases4.csv
     sudo systemctl start kea-dhcp4
-    
+     
     # Limpia DNS (Bind)
     echo "2. Vaciando caché de BIND DNS..."
     sudo rndc flush || sudo systemctl restart named
     
     echo "3. Limpiando caché del sistema Linux..."
-    sudo resolvectl flush-caches &> /dev/null || echo "Resolvectl no disponible, omitiendo..."
+    sudo resolvectl flush-caches &> /dev/null || echo "Resolvectl no disponible."
     
     echo -e "\n${GREEN}[OK] Caché de servicios limpia correctamente.${NC}"
-    echo -e "${CYAN}Nota: Recuerda ejecutar 'ipconfig /flushdns' en tu cliente Windows.${NC}"
+    
     read -p "Presione Enter para volver..."
-} 
-# Al final de funciones_dns.sh, asegúrate de que el menú esté así:
+}
+
 menu_dns() {
     while true; do
         clear
@@ -266,7 +236,8 @@ menu_dns() {
         echo "3) Nuevo Dominio"
         echo "4) Borrar Dominio"
         echo "5) Consultar Dominio"
-        echo "6) Volver"
+        echo "6) Limpiar Sistema"
+        echo "7) Volver"
         read -p "Seleccione: " op
         case $op in
             1) estado_dns ;;
@@ -274,7 +245,9 @@ menu_dns() {
             3) nuevo_dominio ;;
             4) borrar_dominio ;;
             5) consultar_dominio ;;
-            6) break ;;
+            6) limpiar_sistema ;;
+            7) break ;;
+            *) echo "Opción no válida"; sleep 1 ;;
         esac
     done
 }

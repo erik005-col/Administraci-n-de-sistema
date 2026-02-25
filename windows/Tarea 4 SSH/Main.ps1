@@ -1,14 +1,14 @@
 # ===============================
 #   MAIN - PUNTO DE ENTRADA
 # ===============================
-#cargar modulo externos
+
 . "$PSScriptRoot\FuncionesBase.ps1"
 . "$PSScriptRoot\FuncionesDHCP.ps1"
 . "$PSScriptRoot\FuncionesDNS.ps1"
 . "$PSScriptRoot\FuncionesSSH.ps1"
-#===============================
-# MENU PRINCIPAL
-#===============================
+
+  $continuar = $true
+
 do {
     Clear-Host
     Write-Host "======================================" -ForegroundColor Green
@@ -20,6 +20,7 @@ do {
     Write-Host "4) Salir"
 
     $op = Read-Host "Seleccione una opcion"
+     
 
     switch ($op) {
 
@@ -29,7 +30,7 @@ do {
 
         "3" { Instalar-SSH }
 
-        "4" { break }
+        "4" {$continuar = $false }
 
         default {
             Write-Host "Opcion invalida." -ForegroundColor Red
@@ -37,4 +38,4 @@ do {
         }
     }
 
-} while ($true)
+} while ($continuar)
