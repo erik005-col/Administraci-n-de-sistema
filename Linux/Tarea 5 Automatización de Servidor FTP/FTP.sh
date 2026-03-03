@@ -1,111 +1,144 @@
 #!/bin/bash
+
 BASE_DIR="/srv/ftp"
 PUBLIC_DIR="$BASE_DIR/general"
-GROUPS=("reprobados" "recursadores")
+GROUPS="reprobados recursadores"
 
-# 1. Función de Instalación
-intalar_ftp() {
+if [ "$EUID" -ne 0 ]; then
+    echo "Este script debe ejecutarse como root."
+    echo "Use: sudo ./FTP.sh"
+    exit 1
+fi
+
+instalar_ftp() {
+
+
     echo "============================================="
-    echo "          Instalación de FTP (DNF)           "
+    echo "Configuracion de Entorno FTP"
     echo "============================================="
 
-    # En Oracle Linux usamos dnf
     dnf install -y vsftpd
 
-    # Creamos directorios base si no existen
-    mkdir -p $PUBLIC_DIR
+    mkdir -p "$BASE_DIR"
 
-    # Permisos para la carpeta pública (lectura para todos)
-    chmod 755 $PUBLIC_DIR
-
-    # Crear grupos y sus carpetas
-    for g in "${GROUPS[@]}"; do
-        groupadd -f $g
-        mkdir -p $BASE_DIR/$g
-        chgrp $g $BASE_DIR/$g
-        chmod 770 $BASE_DIR/$g # Solo dueño y grupo pueden entrar
+    # Crear grupos directamente (sin variable)
+    for g in reprobados recursadores; do
+        if getent group "$g" > /dev/null; then
+            echo "Grupo $g ya existe."
+        else
+            echo "Creando grupo $g..."
+            groupadd "$g"
+        fi
     done
 
-    # Configuración del archivo vsftpd
-    cp /etc/vsftpd.conf /etc/vsftpd.conf.bak 2>/dev/null
+    mkdir -p "$PUBLIC_DIR"
+    chmod 755 "$PUBLIC_DIR"
+    chown root:root "$PUBLIC_DIR"
 
-cat > /etc/vsftpd.conf <<EOF
-listen=YES
-anonymous_enable=YES
-local_enable=YES
-write_enable=YES
-local_umask=022
-anon_root=$PUBLIC_DIR
-local_root=$BASE_DIR
-chroot_local_user=YES
-allow_writeable_chroot=YES
-pasv_enable=YES
-EOF
+    for g in reprobados recursadores; do
+        mkdir -p "$BASE_DIR/$g"
+        chown root:"$g" "$BASE_DIR/$g"
+        chmod 775 "$BASE_DIR/$g"
+    done
 
-    systemctl enable vsftpd
     systemctl restart vsftpd
-    echo "Servicio listo."
-}
+    systemctl enable vsftpd
 
-# 2. Función de creación de usuarios
+    echo "Entorno configurado correctamente."
 crear_usuario_ftp() {
-    read -p "¿Cuántos usuarios desea crear?: " num_users
 
-    # Usamos la variable que el usuario ingresó
-    for ((i=1; i<=$num_users; i++)); do
+    read -p "Cuantos usuarios desea crear?: " num_users
+
+    for ((i=1; i<=num_users; i++)); do
+
         echo "--------- Registro de Usuario $i ---------"
+
         read -p "Nombre de usuario: " username
-        read -s -p "Contraseña: " password
-        echo
+        read -s -p "Contrasena: " password; echo
         read -p "Grupo (reprobados/recursadores): " grupo_op
 
-        # Crear usuario
-        useradd -m -d "$BASE_DIR/$username" -s /sbin/nologin $username
-        echo "$username:$password" | chpasswd
-
-        
-        if [[ "$grupo_op" == "reprobados" || "$grupo_op" == "recursadores" ]]; then
-            usermod -aG $grupo_op $username
-            # IMPORTANTE: Aquí asignamos la propiedad de su carpeta personal
-            chown $username:$grupo_op $BASE_DIR/$username
-            chmod 700 $BASE_DIR/$username
-        else
-            echo "Grupo no válido."
+        if ! getent group "$grupo_op" > /dev/null; then
+            echo "El grupo $grupo_op no existe."
+            continue
         fi
-        echo "Usuario $username creado."
+
+        if id "$username" &>/dev/null; then
+            echo "Usuario $username ya existe."
+        else
+            useradd -d "$BASE_DIR/$username" -s /sbin/nologin "$username"
+            echo "$username:$password" | chpasswd
+        fi
+
+        usermod -aG "$grupo_op" "$username"
+
+        USER_HOME="$BASE_DIR/$username"
+        mkdir -p "$USER_HOME"
+        chown "$username:$username" "$USER_HOME"
+        chmod 755 "$USER_HOME"
+
+        mkdir -p "$USER_HOME/general"
+        mkdir -p "$USER_HOME/$grupo_op"
+        mkdir -p "$USER_HOME/$username"
+
+        mountpoint -q "$USER_HOME/general" || mount --bind "$PUBLIC_DIR" "$USER_HOME/general"
+        mountpoint -q "$USER_HOME/$grupo_op" || mount --bind "$BASE_DIR/$grupo_op" "$USER_HOME/$grupo_op"
+
+        chown -R "$username:$username" "$USER_HOME/$username"
+        chmod 700 "$USER_HOME/$username"
+
+        echo "Usuario $username creado correctamente."
     done
 }
 
-# 3. Cambiar grupo
 cambiar_grupo() {
+
     read -p "Usuario a modificar: " user
-    echo "Seleccione el nuevo grupo:"
-    # Select crea un menú automático con los elementos de un array
-    select grp in "${GROUPS[@]}"; do
-        if [ -n "$grp" ]; then
-            usermod -g $grp $user # -g cambia el grupo principal
-            echo "Usuario $user ahora pertenece a $grp"
+
+    if ! id "$user" &>/dev/null; then
+        echo "Usuario no existe."
+        return
+    fi
+
+    echo "Seleccione nuevo grupo:"
+    select nuevo_grupo in $GROUPS; do
+        if [ -n "$nuevo_grupo" ]; then
+
+            for g in $GROUPS; do
+                gpasswd -d "$user" "$g" 2>/dev/null
+                if mountpoint -q "$BASE_DIR/$user/$g"; then
+                    umount "$BASE_DIR/$user/$g"
+                    rmdir "$BASE_DIR/$user/$g"
+                fi
+            done
+
+            usermod -aG "$nuevo_grupo" "$user"
+
+            mkdir -p "$BASE_DIR/$user/$nuevo_grupo"
+            mount --bind "$BASE_DIR/$nuevo_grupo" "$BASE_DIR/$user/$nuevo_grupo"
+
+            echo "Usuario movido a $nuevo_grupo."
             break
         else
-            echo "Opción inválida."
+            echo "Opcion invalida."
         fi
     done
 }
 
-# --- MENÚ PRINCIPAL ---
 while true; do
-    echo -e "\nMENÚ DE ADMINISTRACIÓN FTP"
-    echo "1) Instalar FTP"
+    echo ""
+    echo "MENU DE ADMINISTRACION FTP"
+    echo "1) Instalar y Configurar Entorno"
     echo "2) Crear usuarios"
     echo "3) Cambiar usuario de grupo"
     echo "4) Salir"
-    read -p "Opción: " opcion
+
+    read -p "Opcion: " opcion
 
     case $opcion in
-        1) intalar_ftp ;;
+        1) instalar_ftp ;;
         2) crear_usuario_ftp ;;
         3) cambiar_grupo ;;
         4) exit 0 ;;
-        *) echo "Inválido" ;;
+        *) echo "Opcion invalida" ;;
     esac
 done
