@@ -1,144 +1,175 @@
 #!/bin/bash
 
-BASE_DIR="/srv/ftp"
-PUBLIC_DIR="$BASE_DIR/general"
-GROUPS="reprobados recursadores"
-
-if [ "$EUID" -ne 0 ]; then
-    echo "Este script debe ejecutarse como root."
-    echo "Use: sudo ./FTP.sh"
-    exit 1
+# --- VALIDACIÓN DE ROOT ---
+if [[ $EUID -ne 0 ]]; then
+  echo "Error: Este script debe ejecutarse como root (sudo)."
+  exit 1
 fi
 
-instalar_ftp() {
+# --- VARIABLES GLOBALES ---
+CONF="/etc/vsftpd/vsftpd.conf"
+RAIZ_FTP="/ftp"
 
+# --- FUNCIONES DE SOPORTE ---
+configurar_firewall(){
+    if systemctl is-active --quiet firewalld; then
+       firewall-cmd --permanent --add-service=ftp
+       firewall-cmd --permanent --add-port=40000-40100/tcp
+       firewall-cmd --reload
+       echo "Firewall configurado."
+    fi
+}
 
-    echo "============================================="
-    echo "Configuracion de Entorno FTP"
-    echo "============================================="
+configurar_selinux(){
+    if command -v getenforce &>/dev/null; then
+        setsebool -P ftpd_full_access 1 2>/dev/null
+        echo "SELinux ajustado."
+    fi
+}
 
-    dnf install -y vsftpd
+# --- OPCIONES DEL MENÚ ---
 
-    mkdir -p "$BASE_DIR"
+instalar_ftp(){
+    echo "Instalando vsftpd..."
+    dnf install -y vsftpd > /dev/null 2>&1
+    systemctl enable --now vsftpd
+    configurar_firewall
+    configurar_selinux
+    echo "Servicio instalado y activo."
+}
 
-    # Crear grupos directamente (sin variable)
-    for g in reprobados recursadores; do
-        if getent group "$g" > /dev/null; then
-            echo "Grupo $g ya existe."
-        else
-            echo "Creando grupo $g..."
-            groupadd "$g"
-        fi
-    done
-
-    mkdir -p "$PUBLIC_DIR"
-    chmod 755 "$PUBLIC_DIR"
-    chown root:root "$PUBLIC_DIR"
-
-    for g in reprobados recursadores; do
-        mkdir -p "$BASE_DIR/$g"
-        chown root:"$g" "$BASE_DIR/$g"
-        chmod 775 "$BASE_DIR/$g"
-    done
-
+configurar_vsftpd(){
+    cp -n "$CONF" "$CONF.bak"
+    cat <<EOF > "$CONF"
+anonymous_enable=YES
+local_enable=YES
+write_enable=YES
+local_umask=022
+dirmessage_enable=YES
+xferlog_enable=YES
+connect_from_port_20=YES
+chroot_local_user=YES
+allow_writeable_chroot=YES
+pasv_enable=YES
+pasv_min_port=40000
+pasv_max_port=40100
+anon_root=$RAIZ_FTP
+listen=NO
+listen_ipv6=YES
+pam_service_name=vsftpd
+userlist_enable=YES
+EOF
     systemctl restart vsftpd
-    systemctl enable vsftpd
+    echo "Archivo vsftpd.conf optimizado."
+}
 
-    echo "Entorno configurado correctamente."
-crear_usuario_ftp() {
+crear_estructura_base(){
+    mkdir -p "$RAIZ_FTP"/{general,reprobados,recursadores}
+    groupadd -f reprobados
+    groupadd -f recursadores
+    groupadd -f ftpusuarios
 
-    read -p "Cuantos usuarios desea crear?: " num_users
+    # Permisos Raíz
+    chown root:root "$RAIZ_FTP"
+    chmod 755 "$RAIZ_FTP"
 
-    for ((i=1; i<=num_users; i++)); do
+    # Carpeta General (Lectura anónima, escritura para logueados)
+    chown root:ftpusuarios "$RAIZ_FTP/general"
+    chmod 775 "$RAIZ_FTP/general"
 
-        echo "--------- Registro de Usuario $i ---------"
+    # Carpetas de Grupo
+    chown root:reprobados "$RAIZ_FTP/reprobados"
+    chown root:recursadores "$RAIZ_FTP/recursadores"
+    chmod 2770 "$RAIZ_FTP/reprobados"
+    chmod 2770 "$RAIZ_FTP/recursadores"
+    
+    echo "Estructura y grupos creados."
+}
 
-        read -p "Nombre de usuario: " username
-        read -s -p "Contrasena: " password; echo
-        read -p "Grupo (reprobados/recursadores): " grupo_op
+crear_usuarios_masivo(){
+    read -p "¿Cuántos usuarios registrar?: " n
+    for (( i=1; i<=n; i++ )); do
+        echo -e "\n--- Usuario $i ---"
+        read -p "Nombre: " nombre
+        read -s -p "Password: " pass; echo
+        read -p "Grupo (reprobados/recursadores): " grupo
 
-        if ! getent group "$grupo_op" > /dev/null; then
-            echo "El grupo $grupo_op no existe."
+        if [[ "$grupo" != "reprobados" && "$grupo" != "recursadores" ]]; then
+            echo "Grupo no válido, saltando..."
             continue
         fi
 
-        if id "$username" &>/dev/null; then
-            echo "Usuario $username ya existe."
-        else
-            useradd -d "$BASE_DIR/$username" -s /sbin/nologin "$username"
-            echo "$username:$password" | chpasswd
-        fi
+        # Crear usuario con Home apuntando a la raíz FTP
+        # -d define el directorio, -M no crea /home/usuario tradicional
+        useradd -d "$RAIZ_FTP" -s /sbin/nologin -G "$grupo,ftpusuarios" "$nombre"
+        echo "$nombre:$pass" | chpasswd
 
-        usermod -aG "$grupo_op" "$username"
-
-        USER_HOME="$BASE_DIR/$username"
-        mkdir -p "$USER_HOME"
-        chown "$username:$username" "$USER_HOME"
-        chmod 755 "$USER_HOME"
-
-        mkdir -p "$USER_HOME/general"
-        mkdir -p "$USER_HOME/$grupo_op"
-        mkdir -p "$USER_HOME/$username"
-
-        mountpoint -q "$USER_HOME/general" || mount --bind "$PUBLIC_DIR" "$USER_HOME/general"
-        mountpoint -q "$USER_HOME/$grupo_op" || mount --bind "$BASE_DIR/$grupo_op" "$USER_HOME/$grupo_op"
-
-        chown -R "$username:$username" "$USER_HOME/$username"
-        chmod 700 "$USER_HOME/$username"
-
-        echo "Usuario $username creado correctamente."
+        # Carpeta Personal
+        mkdir -p "$RAIZ_FTP/$nombre"
+        chown "$nombre":"$grupo" "$RAIZ_FTP/$nombre"
+        chmod 700 "$RAIZ_FTP/$nombre"
+        
+        echo "Usuario $nombre configurado."
     done
 }
 
-cambiar_grupo() {
-
-    read -p "Usuario a modificar: " user
-
-    if ! id "$user" &>/dev/null; then
+cambiar_grupo(){
+    read -p "Nombre del usuario: " nombre
+    read -p "Nuevo grupo (reprobados/recursadores): " nuevo
+    if id "$nombre" &>/dev/null; then
+        # Remover de grupos viejos y asignar nuevo
+        usermod -g "$nuevo" "$nombre"
+        # Actualizar dueño de su carpeta personal
+        chown "$nombre":"$nuevo" "$RAIZ_FTP/$nombre"
+        echo "Usuario movido a $nuevo."
+    else
         echo "Usuario no existe."
-        return
     fi
-
-    echo "Seleccione nuevo grupo:"
-    select nuevo_grupo in $GROUPS; do
-        if [ -n "$nuevo_grupo" ]; then
-
-            for g in $GROUPS; do
-                gpasswd -d "$user" "$g" 2>/dev/null
-                if mountpoint -q "$BASE_DIR/$user/$g"; then
-                    umount "$BASE_DIR/$user/$g"
-                    rmdir "$BASE_DIR/$user/$g"
-                fi
-            done
-
-            usermod -aG "$nuevo_grupo" "$user"
-
-            mkdir -p "$BASE_DIR/$user/$nuevo_grupo"
-            mount --bind "$BASE_DIR/$nuevo_grupo" "$BASE_DIR/$user/$nuevo_grupo"
-
-            echo "Usuario movido a $nuevo_grupo."
-            break
-        else
-            echo "Opcion invalida."
-        fi
-    done
 }
 
+eliminar_usuario(){
+    read -p "Usuario a eliminar: " nombre
+    if id "$nombre" &>/dev/null; then
+        userdel "$nombre"
+        rm -rf "$RAIZ_FTP/$nombre"
+        echo "Usuario y su carpeta personal eliminados."
+    else
+        echo "No existe el usuario."
+    fi
+}
+
+ver_usuarios(){
+    echo -e "\n--- Usuarios en Grupos FTP ---"
+    echo "REPROBADOS:"
+    getent group reprobados | cut -d: -f4
+    echo "RECURSADORES:"
+    getent group recursadores | cut -d: -f4
+}
+
+# --- MENÚ PRINCIPAL ---
 while true; do
-    echo ""
-    echo "MENU DE ADMINISTRACION FTP"
-    echo "1) Instalar y Configurar Entorno"
-    echo "2) Crear usuarios"
-    echo "3) Cambiar usuario de grupo"
-    echo "4) Salir"
+    echo -e "\n*****************************************"
+    echo "* SISTEMA DE GESTIÓN FTP (LINUX)      *"
+    echo "*****************************************"
+    echo "1) Instalación y Configuración Inicial"
+    echo "2) Crear Estructura y Grupos"
+    echo "3) Creación Masiva de Usuarios"
+    echo "4) Cambiar Usuario de Grupo"
+    echo "5) Ver Estado del Servicio FTP"
+    echo "6) Ver Usuarios FTP"
+    echo "7) Eliminar Usuario"
+    echo "0) Salir"
+    read -p "Seleccione opción: " opt
 
-    read -p "Opcion: " opcion
-
-    case $opcion in
-        1) instalar_ftp ;;
-        2) crear_usuario_ftp ;;
-        3) cambiar_grupo ;;
-        4) exit 0 ;;
-        *) echo "Opcion invalida" ;;
+    case $opt in
+        1) instalar_ftp; configurar_vsftpd ;;
+        2) crear_estructura_base ;;
+        3) crear_usuarios_masivo ;;
+        4) cambiar_grupo ;;
+        5) systemctl status vsftpd ;;
+        6) ver_usuarios ;;
+        7) eliminar_usuario ;;
+        0) break ;;
+        *) echo "Opción no válida." ;;
     esac
 done
