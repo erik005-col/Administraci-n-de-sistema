@@ -100,6 +100,7 @@ function Crear-Grupos {
 
 function Crear-Estructura {
 
+  
     Write-Host "`nCreando estructura FTP..." -ForegroundColor Cyan
 
     if (!(Test-Path $ftpRoot)) {
@@ -107,17 +108,10 @@ function Crear-Estructura {
         New-Item $ftpRoot -ItemType Directory
     }
 
-    $folders = @("general","reprobados","recursadores")
-
-    foreach ($f in $folders) {
-
-        $path = "$ftpRoot\$f"
-
-        if (!(Test-Path $path)) {
-
-            New-Item $path -ItemType Directory
-        }
-    }
+    New-Item "$ftpRoot\general" -ItemType Directory -Force
+    New-Item "$ftpRoot\reprobados" -ItemType Directory -Force
+    New-Item "$ftpRoot\recursadores" -ItemType Directory -Force
+    New-Item "$ftpRoot\LocalUser" -ItemType Directory -Force
 
     Write-Host "Estructura creada." -ForegroundColor Green
 }
@@ -143,9 +137,10 @@ function Asignar-Permisos {
     icacls $ftpRoot /grant "Usuarios:(OI)(CI)M"
 
     # Grupos FTP
-    icacls "$ftpRoot\reprobados" /grant "reprobados:(OI)(CI)M"
-    icacls "$ftpRoot\recursadores" /grant "recursadores:(OI)(CI)M"
+    icacls "$ftpRoot\reprobados" /grant "reprobados:(OI)(CI)F"
+    icacls "$ftpRoot\recursadores" /grant "recursadores:(OI)(CI)F"
     icacls "$ftpRoot\general" /grant "ftpusuarios:(OI)(CI)M"
+    icacls "$ftpRoot\general" /grant "IUSR:(OI)(CI)R"
 
     Write-Host "Permisos aplicados correctamente." -ForegroundColor Green
 }
@@ -168,20 +163,23 @@ function Configurar-FTP {
         -Port 21 `
         -PhysicalPath $ftpRoot `
         -Force
-
+   
     Set-ItemProperty "IIS:\Sites\$ftpSite" `
         -Name ftpServer.userIsolation.mode `
         -Value "None"
 
     # Autenticación
+    
+   
     Set-ItemProperty "IIS:\Sites\$ftpSite" `
         -Name ftpServer.security.authentication.anonymousAuthentication.enabled `
-        -Value $false
+        -Value $true
 
     Set-ItemProperty "IIS:\Sites\$ftpSite" `
         -Name ftpServer.security.authentication.basicAuthentication.enabled `
         -Value $true
 
+   
     # ------------------------------
     # SOLUCIÓN ERROR 534 SSL
     # ------------------------------
@@ -228,14 +226,20 @@ function Configurar-FTP {
         -Filter system.ftpServer/security/authorization `
         -PSPath IIS:\ `
         -Location $ftpSite `
-        -Value @{accessType="Allow";users="*";permissions="Read,Write"}
+        -Value @{accessType="Allow";roles="ftpusuarios";permissions="Read,Write"}
+
+     # acceso anonimo solo lectura
+    Add-WebConfiguration `
+    -Filter system.ftpServer/security/authorization `
+    -PSPath IIS:\ `
+    -Location $ftpSite `
+    -Value @{accessType="Allow";users="anonymous";permissions="Read"}
 
     # Reiniciar servicio FTP
     Restart-Service ftpsvc
 
-    # Iniciar sitio FTP
-    Start-WebItem "IIS:\Sites\$ftpSite"
-
+   
+    
     Write-Host "FTP configurado y iniciado correctamente." -ForegroundColor Green
 }
 
@@ -244,28 +248,36 @@ function Configurar-FTP {
 # ------------------------------------------------------------------------------
 
 function Crear-Usuario {
+    $cantidad = Read-Host "¿Cuantos usuarios desea crear?"
 
-  $usuario = Read-Host "Nombre del usuario"
+    for ($i=1; $i -le $cantidad; $i++) {
+
+    Write-Host ""
+    Write-Host "Creando usuario $i de $cantidad" -ForegroundColor Yellow
+
+    $usuario = Read-Host "Nombre del usuario"
     $pass = Read-Host "Contraseña" -AsSecureString
     $grupo = Read-Host "Grupo (reprobados/recursadores)"
 
     New-LocalUser `
-        -Name $usuario `
-        -Password $pass `
-        -Description "Usuario FTP"
+    -Name $usuario `
+    -Password $pass `
+    -Description "Usuario FTP" `
+    -ErrorAction SilentlyContinue
 
     Add-LocalGroupMember -Group $grupo -Member $usuario
     Add-LocalGroupMember -Group "ftpusuarios" -Member $usuario
 
-    $userFolder = "$ftpRoot\$usuario"
+    $userFolder = "$ftpRoot\LocalUser\$usuario"
 
     New-Item $userFolder -ItemType Directory -Force
 
-    icacls $userFolder /inheritance:r
-    icacls $userFolder /grant "${usuario}:(OI)(CI)F"
-    icacls $userFolder /grant "IIS_IUSRS:(OI)(CI)M"
 
-    Write-Host "Usuario $usuario creado correctamente." -ForegroundColor Green
+    icacls $userFolder /grant "${usuario}:(OI)(CI)F"
+
+    
+    Write-Host "Usuario $usuario creado y configurado." -ForegroundColor Green
+}
 }
 
 # ------------------------------------------------------------------------------
@@ -283,7 +295,39 @@ function Ver-Estado {
 
     Get-LocalUser
 }
+# ------------------------------------------------------------------------------
+# CAMBIAR USUARIO DE GRUPO
+# ------------------------------------------------------------------------------
 
+function Cambiar-Grupo {
+
+    Write-Host ""
+    $usuario = Read-Host "Usuario a modificar"
+
+    Write-Host "Nuevo grupo:"
+    Write-Host "1) reprobados"
+    Write-Host "2) recursadores"
+
+    $op = Read-Host "Seleccione opción"
+
+    if ($op -eq "1") {
+        $nuevoGrupo = "reprobados"
+        $grupoViejo = "recursadores"
+    }
+    elseif ($op -eq "2") {
+        $nuevoGrupo = "recursadores"
+        $grupoViejo = "reprobados"
+    }
+    else {
+        Write-Host "Opción inválida" -ForegroundColor Red
+        return
+    }
+
+    Remove-LocalGroupMember -Group $grupoViejo -Member $usuario -ErrorAction SilentlyContinue
+    Add-LocalGroupMember -Group $nuevoGrupo -Member $usuario
+
+    Write-Host "Usuario $usuario ahora pertenece a $nuevoGrupo" -ForegroundColor Green
+}
 # ------------------------------------------------------------------------------
 # MENÚ ADMIN
 # ------------------------------------------------------------------------------
@@ -305,6 +349,7 @@ function Menu {
         Write-Host "6) Configurar FTP"
         Write-Host "7) Crear Usuario"
         Write-Host "8) Ver Estado"
+        Write-Host "9) Cambiar grupo de usuario"
         Write-Host "0) Salir"
 
         $op = Read-Host "Seleccione opción"
@@ -319,6 +364,7 @@ function Menu {
             "6" { Configurar-FTP }
             "7" { Crear-Usuario }
             "8" { Ver-Estado }
+            "9" { Cambiar-Grupo }
             "0" { break }
         }
     }
