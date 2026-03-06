@@ -16,7 +16,7 @@ $ftpSite = "FTP_SERVER"
 
 function Instalar-FTP {
 
-    Write-Host "`nInstalando IIS + FTP..." -ForegroundColor Cyan
+Write-Host "`nInstalando IIS + FTP..." -ForegroundColor Cyan
 
     $features = @(
         "Web-Server",
@@ -28,19 +28,27 @@ function Instalar-FTP {
 
     foreach ($f in $features) {
 
-        if (!(Get-WindowsFeature $f).Installed) {
+        $estado = Get-WindowsFeature $f
 
+        if (-not $estado.Installed) {
+
+            Write-Host "Instalando $f..."
             Install-WindowsFeature $f -IncludeManagementTools
+
+        }
+        else {
+
+            Write-Host "$f ya está instalado."
         }
     }
 
-    Start-Service W3SVC
+    Start-Service W3SVC -ErrorAction SilentlyContinue
     Set-Service W3SVC -StartupType Automatic
 
-    Start-Service ftpsvc
+    Start-Service ftpsvc -ErrorAction SilentlyContinue
     Set-Service ftpsvc -StartupType Automatic
 
-    Write-Host "IIS + FTP instalado correctamente." -ForegroundColor Green
+    Write-Host "IIS + FTP listo." -ForegroundColor Green
 }
 
 # ------------------------------------------------------------------------------
@@ -51,29 +59,33 @@ function Configurar-Firewall {
 
     Write-Host "`nConfigurando firewall..." -ForegroundColor Cyan
 
-    New-NetFirewallRule `
-        -DisplayName "FTP 21" `
-        -Direction Inbound `
-        -Protocol TCP `
-        -LocalPort 21 `
-        -Action Allow `
-        -ErrorAction SilentlyContinue
+  if (-not (Get-NetFirewallRule -DisplayName "FTP 21" -ErrorAction SilentlyContinue)) {
+        New-NetFirewallRule `
+            -DisplayName "FTP 21" `
+            -Direction Inbound `
+            -Protocol TCP `
+            -LocalPort 21 `
+            -Action Allow `
+            -ErrorAction SilentlyContinue
+    }   
 
-    New-NetFirewallRule `
+    if (-not (Get-NetFirewallRule -DisplayName "FTP Passive Ports" -ErrorAction SilentlyContinue)) {
+
+        New-NetFirewallRule `
         -DisplayName "FTP Passive Ports" `
         -Direction Inbound `
         -Protocol TCP `
         -LocalPort 50000-51000 `
-        -Action Allow `
-        -ErrorAction SilentlyContinue
-
+        -Action Allow
+    }
     netsh advfirewall firewall add rule name="FTP Service" `
-        action=allow `
-        service=ftpsvc `
-        protocol=TCP `
-        dir=in 2>$null
+      action=allow `
+      service=ftpsvc `
+      protocol=TCP `
+     dir=in 2>$null
 
     Write-Host "Firewall listo." -ForegroundColor Green
+    
 }
 
 # ------------------------------------------------------------------------------
@@ -101,20 +113,28 @@ function Crear-Grupos {
 function Crear-Estructura {
 
   
-    Write-Host "`nCreando estructura FTP..." -ForegroundColor Cyan
+ Write-Host "`nCreando estructura FTP..." -ForegroundColor Cyan
 
-    if (!(Test-Path $ftpRoot)) {
+    # crear carpeta raíz
+    New-Item $ftpRoot -ItemType Directory -Force | Out-Null
 
-        New-Item $ftpRoot -ItemType Directory
+    # carpetas principales
+    New-Item "$ftpRoot\general" -ItemType Directory -Force | Out-Null
+    New-Item "$ftpRoot\reprobados" -ItemType Directory -Force | Out-Null
+    New-Item "$ftpRoot\recursadores" -ItemType Directory -Force | Out-Null
+
+    # estructura IIS FTP
+    New-Item "$ftpRoot\LocalUser" -ItemType Directory -Force | Out-Null
+    New-Item "$ftpRoot\LocalUser\Public" -ItemType Directory -Force | Out-Null
+
+    # enlace para anonymous
+    if (!(Test-Path "$ftpRoot\LocalUser\Public\general")) {
+        cmd /c mklink /J "$ftpRoot\LocalUser\Public\general" "$ftpRoot\general"
     }
 
-    New-Item "$ftpRoot\general" -ItemType Directory -Force
-    New-Item "$ftpRoot\reprobados" -ItemType Directory -Force
-    New-Item "$ftpRoot\recursadores" -ItemType Directory -Force
-    New-Item "$ftpRoot\LocalUser" -ItemType Directory -Force
-
-    Write-Host "Estructura creada." -ForegroundColor Green
+    Write-Host "Estructura creada correctamente." -ForegroundColor Green
 }
+
 
 # ------------------------------------------------------------------------------
 # PERMISOS
@@ -132,17 +152,27 @@ function Asignar-Permisos {
 
     # Servicio IIS FTP
     icacls $ftpRoot /grant "IIS_IUSRS:(OI)(CI)M"
+    icacls "$ftpRoot\general" /grant "IIS_IUSRS:(OI)(CI)M"
+    icacls "$ftpRoot\reprobados" /grant "IIS_IUSRS:(OI)(CI)M"
+    icacls "$ftpRoot\recursadores" /grant "IIS_IUSRS:(OI)(CI)M"
 
-    # Usuarios del sistema
-    icacls $ftpRoot /grant "Usuarios:(OI)(CI)M"
+    # Anónimo puede entrar al FTP
+    icacls $ftpRoot /grant "IUSR:(RX)"
+    icacls "$ftpRoot\LocalUser\Public" /grant "IUSR:(OI)(CI)R"
 
-    # Grupos FTP
-    icacls "$ftpRoot\reprobados" /grant "reprobados:(OI)(CI)F"
-    icacls "$ftpRoot\recursadores" /grant "recursadores:(OI)(CI)F"
+    # Carpeta pública (general)
     icacls "$ftpRoot\general" /grant "ftpusuarios:(OI)(CI)M"
     icacls "$ftpRoot\general" /grant "IUSR:(OI)(CI)R"
 
+    # Grupo reprobados
+    icacls "$ftpRoot\reprobados" /grant "reprobados:(OI)(CI)M"
+
+    # Grupo recursadores
+    icacls "$ftpRoot\recursadores" /grant "recursadores:(OI)(CI)M"
+
     Write-Host "Permisos aplicados correctamente." -ForegroundColor Green
+  
+
 }
 
 # ------------------------------------------------------------------------------
@@ -166,7 +196,7 @@ function Configurar-FTP {
    
     Set-ItemProperty "IIS:\Sites\$ftpSite" `
         -Name ftpServer.userIsolation.mode `
-        -Value "None"
+        -Value "3" # User name directory (Aislamiento por usuario)
 
     # Autenticación
     
@@ -178,6 +208,10 @@ function Configurar-FTP {
     Set-ItemProperty "IIS:\Sites\$ftpSite" `
         -Name ftpServer.security.authentication.basicAuthentication.enabled `
         -Value $true
+
+    Set-ItemProperty "IIS:\Sites\$ftpSite" `
+     -name ftpServer.directoryBrowse.showFlags `
+     -value "Date, Time, Size"
 
    
     # ------------------------------
@@ -223,19 +257,18 @@ function Configurar-FTP {
         -Location $ftpSite
 
     Add-WebConfiguration `
-        -Filter system.ftpServer/security/authorization `
-        -PSPath IIS:\ `
-        -Location $ftpSite `
-        -Value @{accessType="Allow";roles="ftpusuarios";permissions="Read,Write"}
-
-     # acceso anonimo solo lectura
+      -Filter system.ftpServer/security/authorization `
+      -PSPath IIS:\ `
+      -Location $ftpSite `
+      -Value @{accessType="Allow";users="?";permissions="Read"}
+      # USUARIOS AUTENTICADOS
     Add-WebConfiguration `
-    -Filter system.ftpServer/security/authorization `
-    -PSPath IIS:\ `
-    -Location $ftpSite `
-    -Value @{accessType="Allow";users="anonymous";permissions="Read"}
+      -Filter system.ftpServer/security/authorization `
+      -PSPath IIS:\ `
+      -Location $ftpSite `
+      -Value @{accessType="Allow";roles="ftpusuarios";permissions="Read,Write"}
 
-    # Reiniciar servicio FTP
+      # Reiniciar servicio FTP
     Restart-Service ftpsvc
 
    
@@ -248,6 +281,8 @@ function Configurar-FTP {
 # ------------------------------------------------------------------------------
 
 function Crear-Usuario {
+
+    
     $cantidad = Read-Host "¿Cuantos usuarios desea crear?"
 
     for ($i=1; $i -le $cantidad; $i++) {
@@ -256,8 +291,18 @@ function Crear-Usuario {
     Write-Host "Creando usuario $i de $cantidad" -ForegroundColor Yellow
 
     $usuario = Read-Host "Nombre del usuario"
+    if (Get-LocalUser -Name $usuario -ErrorAction SilentlyContinue) {
+
+    Write-Host "El usuario ya existe." -ForegroundColor Red
+    continue
+  }
     $pass = Read-Host "Contraseña" -AsSecureString
     $grupo = Read-Host "Grupo (reprobados/recursadores)"
+
+   if($grupo -ne "reprobados" -and $grupo -ne "recursadores"){
+    Write-Host "Grupo inválido. Solo puede ser reprobados o recursadores." -ForegroundColor Red
+    continue
+  }
 
     New-LocalUser `
     -Name $usuario `
@@ -269,17 +314,31 @@ function Crear-Usuario {
     Add-LocalGroupMember -Group "ftpusuarios" -Member $usuario
 
     $userFolder = "$ftpRoot\LocalUser\$usuario"
+    $grupoFolder = "$ftpRoot\$grupo"
 
+    # crear carpeta del usuario
     New-Item $userFolder -ItemType Directory -Force
 
+    # carpeta personal
+    New-Item "$userFolder\$usuario" -ItemType Directory -Force
 
-    icacls $userFolder /grant "${usuario}:(OI)(CI)F"
+    # enlaces
+    if (!(Test-Path "$userFolder\general")) {
+    cmd /c mklink /J "$userFolder\general" "$ftpRoot\general"
+    }
+    if (!(Test-Path "$userFolder\$grupo")) {
+    cmd /c mklink /J "$userFolder\$grupo" "$ftpRoot\$grupo"
+    }
 
-    
-    Write-Host "Usuario $usuario creado y configurado." -ForegroundColor Green
+    icacls $userFolder /grant "${usuario}:(OI)(CI)M"
+    icacls $grupoFolder /grant "${usuario}:(OI)(CI)M"
+    Restart-Service ftpsvc
+
+    Write-Host "Usuario $usuario creado correctamente." -ForegroundColor Green
+
 }
-}
 
+}
 # ------------------------------------------------------------------------------
 # ESTADO
 # ------------------------------------------------------------------------------
@@ -295,9 +354,7 @@ function Ver-Estado {
 
     Get-LocalUser
 }
-# ------------------------------------------------------------------------------
-# CAMBIAR USUARIO DE GRUPO
-# ------------------------------------------------------------------------------
+
 
 function Cambiar-Grupo {
 
@@ -327,7 +384,9 @@ function Cambiar-Grupo {
     Add-LocalGroupMember -Group $nuevoGrupo -Member $usuario
 
     Write-Host "Usuario $usuario ahora pertenece a $nuevoGrupo" -ForegroundColor Green
+    Restart-Service ftpsvc
 }
+
 # ------------------------------------------------------------------------------
 # MENÚ ADMIN
 # ------------------------------------------------------------------------------
@@ -349,7 +408,7 @@ function Menu {
         Write-Host "6) Configurar FTP"
         Write-Host "7) Crear Usuario"
         Write-Host "8) Ver Estado"
-        Write-Host "9) Cambiar grupo de usuario"
+	Write-Host "9) Cambiar grupo de usuario"
         Write-Host "0) Salir"
 
         $op = Read-Host "Seleccione opción"
@@ -364,9 +423,10 @@ function Menu {
             "6" { Configurar-FTP }
             "7" { Crear-Usuario }
             "8" { Ver-Estado }
-            "9" { Cambiar-Grupo }
-            "0" { break }
-        }
+	        "9" { Cambiar-Grupo }
+	        "0" { break }
+            default { Write-Host "Opción inválida" -ForegroundColor Red }
+        }   
     }
-}
-Menu
+}   
+Menu                     
