@@ -142,20 +142,32 @@ Log "Estructura FTP creada"
 
 function Permisos {
 
+# ROOT
 icacls $ftpRoot /inheritance:r
-
 icacls $ftpRoot /grant "Administrators:(OI)(CI)F"
 icacls $ftpRoot /grant "SYSTEM:(OI)(CI)F"
+icacls $ftpRoot /grant "IUSR:(RX)"
 
+# GENERAL (PUBLICA)
+icacls "$ftpRoot\general" /inheritance:r
+icacls "$ftpRoot\general" /grant "Administrators:(OI)(CI)F"
+icacls "$ftpRoot\general" /grant "SYSTEM:(OI)(CI)F"
 icacls "$ftpRoot\general" /grant "ftpusuarios:(OI)(CI)M"
-icacls "$ftpRoot\general" /grant "IUSR:(OI)(CI)R"
+icacls "$ftpRoot\general" /grant "IUSR:(OI)(CI)RX"
 
+# REPROBADOS
+icacls "$ftpRoot\reprobados" /inheritance:r
+icacls "$ftpRoot\reprobados" /grant "Administrators:(OI)(CI)F"
+icacls "$ftpRoot\reprobados" /grant "SYSTEM:(OI)(CI)F"
 icacls "$ftpRoot\reprobados" /grant "reprobados:(OI)(CI)M"
+
+# RECURSADORES
+icacls "$ftpRoot\recursadores" /inheritance:r
+icacls "$ftpRoot\recursadores" /grant "Administrators:(OI)(CI)F"
+icacls "$ftpRoot\recursadores" /grant "SYSTEM:(OI)(CI)F"
 icacls "$ftpRoot\recursadores" /grant "recursadores:(OI)(CI)M"
 
-Write-Host "Permisos aplicados"
-
-Log "Permisos aplicados"
+Write-Host "Permisos aplicados correctamente"
 
 }
 
@@ -219,12 +231,30 @@ Log "FTP configurado"
 # ------------------------------------------------------------
 
 function Crear-Usuario {
+    $cantidad=Read-Host "¿Cuantos usuarios desea crear?"
+
+for($i=1;$i -le $cantidad;$i++){
+
+Write-Host ""
+Write-Host "Creando usuario $i de $cantidad"
 
 $usuario=Read-Host "Usuario"
-
 $pass=Read-Host "Contraseña" -AsSecureString
-
 $grupo=Read-Host "Grupo (reprobados/recursadores)"
+
+if($grupo -ne "reprobados" -and $grupo -ne "recursadores"){
+
+Write-Host "Grupo inválido"
+continue
+
+}
+
+if(Get-LocalUser $usuario -ErrorAction SilentlyContinue){
+
+Write-Host "El usuario ya existe"
+continue
+
+}
 
 New-LocalUser $usuario -Password $pass
 
@@ -234,22 +264,24 @@ Add-LocalGroupMember "ftpusuarios" -Member $usuario
 $userHome="$ftpRoot\LocalUser\$usuario"
 
 New-Item $userHome -ItemType Directory -Force
-
 New-Item "$ftpRoot\Data\Usuarios\$usuario" -ItemType Directory -Force
 
 cmd /c mklink /J "$userHome\general" "$ftpRoot\general"
 cmd /c mklink /J "$userHome\$grupo" "$ftpRoot\$grupo"
 cmd /c mklink /J "$userHome\$usuario" "$ftpRoot\Data\Usuarios\$usuario"
 
-icacls "$ftpRoot\Data\Usuarios\$usuario" /grant "{$usuario}:(OI)(CI)F"
+icacls "$ftpRoot\Data\Usuarios\$usuario" /grant "${usuario}:(OI)(CI)F"
+
+}
 
 Restart-Service ftpsvc
 
-Write-Host "Usuario creado"
-
-Log "Usuario $usuario creado"
+Write-Host "Usuarios creados correctamente"
 
 }
+
+
+
 
 # ------------------------------------------------------------
 # ELIMINAR USUARIO
@@ -280,19 +312,29 @@ Log "Usuario eliminado"
 function Cambiar-Grupo {
 
 $usuario=Read-Host "Usuario"
-
 $grupo=Read-Host "Nuevo grupo (reprobados/recursadores)"
 
-Remove-LocalGroupMember reprobados $usuario -ErrorAction SilentlyContinue
-Remove-LocalGroupMember recursadores $usuario -ErrorAction SilentlyContinue
+# quitar de grupos
+Remove-LocalGroupMember -Group "reprobados" -Member $usuario -ErrorAction SilentlyContinue
+Remove-LocalGroupMember -Group "recursadores" -Member $usuario -ErrorAction SilentlyContinue
 
-Add-LocalGroupMember $grupo $usuario
+# agregar nuevo
+Add-LocalGroupMember -Group $grupo -Member $usuario
 
-Restart-Service ftpsvc
+$userHome="$ftpRoot\LocalUser\$usuario"
 
-Write-Host "Grupo actualizado"
+# eliminar enlaces viejos
+if(Test-Path "$userHome\reprobados"){Remove-Item "$userHome\reprobados" -Force}
+if(Test-Path "$userHome\recursadores"){Remove-Item "$userHome\recursadores" -Force}
 
-Log "Cambio de grupo"
+# crear nuevo enlace
+cmd /c mklink /J "$userHome\$grupo" "$ftpRoot\$grupo"
+
+# reiniciar IIS completo
+iisreset
+
+Write-Host "Grupo cambiado correctamente"
+
 
 }
 
@@ -302,9 +344,21 @@ Log "Cambio de grupo"
 
 function Ver-Usuarios {
 
-Get-LocalGroupMember ftpusuarios
+Write-Host ""
+Write-Host "Usuarios FTP creados:"
+Write-Host ""
+
+Get-LocalGroupMember ftpusuarios | ForEach-Object {
+
+$u=$_.Name.Split("\")[-1]
+
+Write-Host "Usuario:" $u
 
 }
+
+}
+
+
 
 # ------------------------------------------------------------
 # REINICIAR FTP
