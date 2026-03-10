@@ -1,362 +1,264 @@
-Import-Module WebAdministration
+# -------------------------------
+# VALIDAR PUERTO
+# -------------------------------
 
-############################
-# VALIDACION INPUT
-############################
+function Solicitar-Puerto {
 
-function Validate-Input {
-    param($input)
+$PUERTO = Read-Host "Ingrese puerto (ej: 8080, 8888)"
 
-    if ([string]::IsNullOrWhiteSpace($input)) {
-        Write-Host "Entrada vacia"
-        return $false
-    }
-
-    if ($input -match "[^0-9]") {
-        Write-Host "Solo numeros permitidos"
-        return $false
-    }
-
-    return $true
+if($PUERTO -notmatch '^[0-9]+$'){
+Write-Host "Puerto invalido"
+return Solicitar-Puerto
 }
 
-############################
-# VALIDACION PUERTO
-############################
-
-function Validate-Port {
-    param($port)
-
-    if ($port -notmatch '^[0-9]+$') {
-        Write-Host "Puerto invalido"
-        return $false
-    }
-
-    $port=[int]$port
-
-    if ($port -lt 1024 -or $port -gt 65535) {
-        Write-Host "Puerto fuera de rango"
-        return $false
-    }
-
-    $reserved = @(21,22,23,25,53,110,135,139,443)
-
-    if ($reserved -contains $port) {
-        Write-Host "Puerto reservado"
-        return $false
-    }
-
-    return $true
+if([int]$PUERTO -lt 1024){
+Write-Host "No se permiten puertos reservados (<1024)"
+return Solicitar-Puerto
 }
 
-############################
-# PUERTO EN USO
-############################
+$ocupado = Test-NetConnection -ComputerName localhost -Port $PUERTO
 
-function Test-PortAvailability {
-    param($port)
-
-    $test = Test-NetConnection -ComputerName localhost -Port $port -WarningAction SilentlyContinue
-
-    if ($test.TcpTestSucceeded) {
-        Write-Host "Puerto ya en uso"
-        return $false
-    }
-
-    return $true
+if($ocupado.TcpTestSucceeded){
+Write-Host "El puerto ya esta en uso"
+return Solicitar-Puerto
 }
 
-############################
-# CONSULTA VERSIONES (CHOCOLATEY)
-############################
+return $PUERTO
 
-function Get-ApacheVersions {
-
-    Check-Chocolatey
-
-    $versions = choco search apache-httpd --all | `
-    Select-String "apache-httpd" | `
-    ForEach-Object { ($_ -split ' ')[1] }
-
-    return $versions
 }
 
-function Get-NginxVersions {
+# -------------------------------
+# CONFIGURAR FIREWALL
+# -------------------------------
 
-    Check-Chocolatey
+function Configurar-Firewall($PUERTO){
+if (-not (Get-NetFirewallRule -DisplayName "HTTP-Custom-${PUERTO}" -ErrorAction SilentlyContinue)) {
 
-    $versions = choco search nginx --all | `
-    Select-String "nginx" | `
-    ForEach-Object { ($_ -split ' ')[1] }
+New-NetFirewallRule `
+-DisplayName "HTTP-Custom-${PUERTO}" `
+-Direction Inbound `
+-Protocol TCP `
+-LocalPort $PUERTO `
+-Action Allow
 
-    return $versions
 }
 
-############################
-# IIS
-############################
-
-function Install-IIS {
-
-    Write-Host "Instalando IIS..."
-
-    Install-WindowsFeature `
-    -Name Web-Server `
-    -IncludeManagementTools
 }
 
-function Set-IISPort {
+# -------------------------------
+# CREAR INDEX WEB
+# -------------------------------
 
-    param($port)
+function Crear-Index($ruta,$servidor,$version,$puerto){
 
-    Remove-WebBinding `
-    -Name "Default Web Site" `
-    -Protocol "http" `
-    -Port 80 `
-    -ErrorAction SilentlyContinue
-
-    New-WebBinding `
-    -Name "Default Web Site" `
-    -Protocol http `
-    -Port $port
-    iisreset
-}
-
-############################
-# APACHE
-############################
-
-function Install-Apache {
-
-    param($version)
-
-    Check-Chocolatey
-
-    choco install apache-httpd `
-    --version=$version `
-    -y
-}
-
-function Set-ApachePort {
-
-    param($port)
-
-    $conf="C:\tools\Apache24\conf\httpd.conf"
-
-    if (Test-Path $conf) {
-
-        (Get-Content $conf) `
-        -replace "Listen 80","Listen $port" `
-        -replace "ServerName localhost:80","ServerName localhost:$port" `
-        | Set-Content $conf
-
-        Restart-Service Apache24 -ErrorAction SilentlyContinue
-    }
-}
-
-############################
-# NGINX
-############################
-
-function Install-Nginx {
-
-    param($version)
-
-    Check-Chocolatey
-
-    choco install nginx `
-    --version=$version `
-    -y
-}
-
-function Set-NginxPort {
-
-    param($port)
-
-    $conf="C:\tools\nginx\conf\nginx.conf"
-
-    if (Test-Path $conf) {
-
-        (Get-Content $conf) `
-        -replace "listen 80","listen $port" `
-        | Set-Content $conf
-
-        Stop-Process -Name nginx -ErrorAction SilentlyContinue
-        Start-Process "C:\tools\nginx\nginx.exe"
-    }
-}
-
-############################
-# FIREWALL
-############################
-
-function Open-FirewallPort {
-
-    param($port)
-
-    New-NetFirewallRule `
-    -DisplayName "HTTP-Custom-$port" `
-    -Direction Inbound `
-    -Protocol TCP `
-    -LocalPort $port `
-    -Action Allow `
-    -Profile Any `
-    -ErrorAction SilentlyContinue
-}
-
-############################
-# INDEX.HTML PERSONALIZADO
-############################
-
-function Create-IndexPage {
-
-    param($server,$version,$port)
-
-    $path="C:\inetpub\wwwroot\index.html"
-
-    if ($server -eq "Apache") {
-        $path="C:\tools\Apache24\htdocs\index.html"
-    }
-
-    if ($server -eq "Nginx") {
-        $path="C:\tools\nginx\html\index.html"
-    }
-
-    $dir = Split-Path $path
-
-    if (!(Test-Path $dir)) {
-        New-Item -ItemType Directory -Path $dir -Force
-    }
-
-$content=@"
+$contenido = @"
 <html>
 <head>
 <title>Servidor HTTP</title>
 </head>
 
 <body>
-
-<h1>Servidor: $server</h1>
+<h1>Servidor: $servidor</h1>
 <h2>Version: $version</h2>
-<h3>Puerto: $port</h3>
-
+<h3>Puerto: $puerto</h3>
 </body>
+
 </html>
 "@
 
-    Set-Content $path $content -Force
+$contenido | Out-File "$ruta\index.html" -Encoding utf8
+
 }
 
-############################
-# USUARIO DE SERVICIO
-############################
+# -------------------------------
+# IIS
+# -------------------------------
 
-function Create-ServiceUser {
+function Instalar-IIS {
 
-$password = ConvertTo-SecureString "P@ssw0rd123!" -AsPlainText -Force
+Write-Host "Instalando IIS..."
 
-if (!(Get-LocalUser -Name "websvc" -ErrorAction SilentlyContinue)) {
+if ((Get-WindowsOptionalFeature -Online -FeatureName IIS-WebServerRole).State -ne "Enabled") {
 
-New-LocalUser `
--Name "websvc" `
--Password $password `
--FullName "HTTP Service User"
-}
-}
+Enable-WindowsOptionalFeature `
+-Online `
+-FeatureName IIS-WebServerRole `
+-All `
+-NoRestart
 
-############################
-# PERMISOS
-############################
-
-function Set-WebPermissions {
-
-$path="C:\inetpub\wwwroot"
-
-if (Test-Path $path) {
-
-icacls $path /inheritance:r
-icacls $path /grant "websvc:(OI)(CI)RX"
-}
 }
 
-############################
+$PUERTO = Solicitar-Puerto
+
+Cambiar-Puerto-IIS $PUERTO
+
+Configurar-Firewall $PUERTO
+
+$version = (Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\InetStp").VersionString
+
+Crear-Index "C:\inetpub\wwwroot" "IIS" $version $PUERTO
+
+Configurar-Seguridad-IIS
+
+Write-Host "IIS instalado correctamente"
+
+}
+
+# -------------------------------
+# CAMBIAR PUERTO IIS
+# -------------------------------
+
+function Cambiar-Puerto-IIS($PUERTO){
+
+Import-Module WebAdministration
+
+# eliminar binding puerto 80
+Remove-WebBinding -Name "Default Web Site" -Protocol "http" -Port 80 -ErrorAction SilentlyContinue
+
+# crear binding nuevo
+New-WebBinding -Name "Default Web Site" -Protocol "http" -Port $PUERTO -IPAddress "*"
+
+Restart-Service W3SVC
+
+}
+# -------------------------------
 # SEGURIDAD IIS
-############################
+# -------------------------------
 
-function Secure-IISHeaders {
+function Configurar-Seguridad-IIS {
+
+Import-Module WebAdministration
 
 Remove-WebConfigurationProperty `
 -pspath 'MACHINE/WEBROOT/APPHOST' `
 -filter "system.webServer/httpProtocol/customHeaders" `
 -name "." `
--AtElement @{name='X-Powered-By'} `
--ErrorAction SilentlyContinue
-
-Set-WebConfigurationProperty `
--Filter system.webServer/security/requestFiltering `
--Name removeServerHeader `
--Value True `
--PSPath IIS:\
-}
-
-function Set-IISSecurityHeaders {
+-atElement @{name='X-Powered-By'}
 
 Add-WebConfigurationProperty `
+-pspath 'MACHINE/WEBROOT/APPHOST' `
 -filter "system.webServer/httpProtocol/customHeaders" `
 -name "." `
--value @{name='X-Frame-Options';value='SAMEORIGIN'} `
--ErrorAction SilentlyContinue
+-value @{name='X-Frame-Options';value='SAMEORIGIN'}
 
 Add-WebConfigurationProperty `
+-pspath 'MACHINE/WEBROOT/APPHOST' `
 -filter "system.webServer/httpProtocol/customHeaders" `
 -name "." `
--value @{name='X-Content-Type-Options';value='nosniff'} `
--ErrorAction SilentlyContinue
+-value @{name='X-Content-Type-Options';value='nosniff'}
+
 }
 
-############################
-# BLOQUEAR METODOS PELIGROSOS
-############################
 
-function Block-DangerousMethods {
+# -------------------------------
+# CONSULTAR VERSIONES APACHE
+# -------------------------------
 
-Add-WebConfiguration `
--Filter "/system.webServer/security/requestFiltering/verbs" `
--Value @{verb="TRACE";allowed="false"} `
--PSPath IIS:\ `
--ErrorAction SilentlyContinue
+function Obtener-Versiones-Apache {
+    Write-Host "=============================="
+    Write-Host "Versiones disponibles Apache"
+    Write-Host "=============================="
+  $versiones = choco list apache-httpd --all | `
+   Where-Object {$_ -match "apache-httpd"} | `
+   ForEach-Object { ($_ -split " ")[1] }
+
+return $versiones
+
 }
 
-############################
-# CHOCOLATEY
-############################
 
-function Check-Chocolatey {
+# -------------------------------
+# INSTALAR APACHE
+# -------------------------------
 
-if (!(Get-Command choco -ErrorAction SilentlyContinue)) {
+function Instalar-Apache {
 
-Write-Host "Instalando Chocolatey..."
+Obtener-Versiones-Apache
 
-Set-ExecutionPolicy Bypass -Scope Process -Force
+$version = Read-Host "Seleccione la version a instalar"
 
-[System.Net.ServicePointManager]::SecurityProtocol =
-[System.Net.ServicePointManager]::SecurityProtocol -bor 3072
+$PUERTO = Solicitar-Puerto
 
-iex ((New-Object System.Net.WebClient).DownloadString(
-'https://community.chocolatey.org/install.ps1'))
+Write-Host "Instalando Apache version $version..."
+
+choco install apache-httpd --version=$version -y
+
+Configurar-Puerto-Apache $PUERTO
+
+Configurar-Firewall $PUERTO
+
+Crear-Index "C:\tools\Apache24\htdocs" "Apache" $version $PUERTO
+
 }
+# -------------------------------
+# CAMBIAR PUERTO APACHE
+# -------------------------------
+
+function Configurar-Puerto-Apache($PUERTO){
+
+$config = "C:\tools\Apache24\conf\httpd.conf"
+
+(Get-Content $config) `
+-replace "Listen 80","Listen $PUERTO" |
+Set-Content $config
+
+
+Restart-Service Apache2.4 -ErrorAction SilentlyContinue
+
 }
 
-############################
-# VALIDAR IIS
-############################
+# -------------------------------
+# CONSULTAR VERSIONES NGINX
+# -------------------------------
 
-function Check-IIS {
+function Obtener-Versiones-Nginx {
 
-$feature = Get-WindowsFeature -Name Web-Server
+Write-Host "Versiones disponibles Nginx:"
+winget show nginx
 
-if (!($feature.Installed)) {
-
-Install-IIS
 }
+
+# -------------------------------
+# INSTALAR NGINX
+# -------------------------------
+
+function Instalar-Nginx {
+
+Obtener-Versiones-Nginx
+
+$PUERTO = Solicitar-Puerto
+
+Write-Host "Instalando Nginx..."
+
+winget install nginx --silent
+
+Start-Sleep 5
+
+Configurar-Puerto-Nginx $PUERTO
+
+Configurar-Firewall $PUERTO
+
+Crear-Index "C:\nginx\html" "Nginx" "Latest" $PUERTO
+
+}
+
+# -------------------------------
+# CAMBIAR PUERTO NGINX
+# -------------------------------
+
+function Configurar-Puerto-Nginx($PUERTO){
+
+$config = "C:\nginx\conf\nginx.conf"
+
+if(Test-Path $config){
+
+(Get-Content $config) `
+-replace "listen 80","listen $PUERTO" |
+Set-Content $config
+
+Stop-Process -Name nginx -Force -ErrorAction SilentlyContinue
+Start-Process "C:\nginx\nginx.exe"
+
+}
+
 }
