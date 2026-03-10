@@ -11,20 +11,6 @@ $ftpSite="FTP_SERVER"
 $logFile="C:\FTP\ftp_log.txt"
 
 # ------------------------------------------------------------
-# LOG
-# ------------------------------------------------------------
-
-function Log {
-
-param($msg)
-
-$fecha=Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-
-Add-Content $logFile "$fecha - $msg"
-
-}
-
-# ------------------------------------------------------------
 # INSTALAR FTP
 # ------------------------------------------------------------
 
@@ -41,24 +27,58 @@ $features=@(
 
 foreach($f in $features){
 
-if(!(Get-WindowsFeature $f).Installed){
+$estado = Get-WindowsFeature $f
 
+if(!$estado.Installed){
+
+Write-Host "Instalando $f ..."
 Install-WindowsFeature $f -IncludeManagementTools
 
 }
+else{
+
+Write-Host "$f ya esta instalado"
 
 }
 
-Start-Service W3SVC
-Start-Service ftpsvc
+}
+
+Start-Service W3SVC -ErrorAction SilentlyContinue
+Start-Service ftpsvc -ErrorAction SilentlyContinue
 
 Set-Service ftpsvc -StartupType Automatic
 
-Write-Host "FTP instalado."
+Write-Host "FTP instalado correctamente"
 
 Log "FTP instalado"
 
 }
+
+# ------------------------------------------------------------
+# LOG
+# ------------------------------------------------------------
+
+function Log {
+
+param($msg)
+
+$fecha = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+
+# Crear carpeta si no existe
+if (!(Test-Path $ftpRoot)) {
+    New-Item -Path $ftpRoot -ItemType Directory -Force | Out-Null
+}
+
+# Crear archivo log si no existe
+if (!(Test-Path $logFile)) {
+    New-Item -Path $logFile -ItemType File -Force | Out-Null
+}
+
+Add-Content $logFile "$fecha - $msg"
+
+}
+
+
 
 # ------------------------------------------------------------
 # FIREWALL
@@ -124,8 +144,10 @@ New-Item "$ftpRoot\general" -ItemType Directory -Force
 New-Item "$ftpRoot\reprobados" -ItemType Directory -Force
 New-Item "$ftpRoot\recursadores" -ItemType Directory -Force
 
+New-Item "$ftpRoot\Data" -ItemType Directory -Force
 New-Item "$ftpRoot\Data\Usuarios" -ItemType Directory -Force
 
+New-Item "$ftpRoot\LocalUser" -ItemType Directory -Force
 New-Item "$ftpRoot\LocalUser\Public" -ItemType Directory -Force
 
 cmd /c mklink /J "$ftpRoot\LocalUser\Public\general" "$ftpRoot\general"
@@ -144,30 +166,28 @@ function Permisos {
 
 # ROOT
 icacls $ftpRoot /inheritance:r
-icacls $ftpRoot /grant "Administradores:(OI)(CI)F"
+icacls $ftpRoot /grant "Administrators:(OI)(CI)F"
 icacls $ftpRoot /grant "SYSTEM:(OI)(CI)F"
 icacls $ftpRoot /grant "IUSR:(RX)"
 
-# GENERAL (PUBLICA)
+# GENERAL
 icacls "$ftpRoot\general" /inheritance:r
-icacls "$ftpRoot\general" /grant "Administradores:(OI)(CI)F"
+icacls "$ftpRoot\general" /grant "Administrators:(OI)(CI)F"
 icacls "$ftpRoot\general" /grant "SYSTEM:(OI)(CI)F"
 icacls "$ftpRoot\general" /grant "ftpusuarios:(OI)(CI)M"
 icacls "$ftpRoot\general" /grant "IUSR:(OI)(CI)RX"
 
 # REPROBADOS
 icacls "$ftpRoot\reprobados" /inheritance:r
-icacls "$ftpRoot\reprobados" /grant "Administradores:(OI)(CI)F"
+icacls "$ftpRoot\reprobados" /grant "Administrators:(OI)(CI)F"
 icacls "$ftpRoot\reprobados" /grant "SYSTEM:(OI)(CI)F"
 icacls "$ftpRoot\reprobados" /grant "reprobados:(OI)(CI)M"
 
 # RECURSADORES
 icacls "$ftpRoot\recursadores" /inheritance:r
-icacls "$ftpRoot\recursadores" /grant "Administradores:(OI)(CI)F"
+icacls "$ftpRoot\recursadores" /grant "Administrators:(OI)(CI)F"
 icacls "$ftpRoot\recursadores" /grant "SYSTEM:(OI)(CI)F"
 icacls "$ftpRoot\recursadores" /grant "recursadores:(OI)(CI)M"
-
-Write-Host "Permisos aplicados correctamente"
 
 }
 
@@ -188,6 +208,15 @@ New-WebFtpSite `
 -Port 21 `
 -PhysicalPath $ftpRoot `
 -Force
+
+# DESACTIVAR SSL (ARREGLA ERROR 534)
+Set-ItemProperty "IIS:\Sites\$ftpSite" `
+-Name ftpServer.security.ssl.controlChannelPolicy `
+-Value 0
+
+Set-ItemProperty "IIS:\Sites\$ftpSite" `
+-Name ftpServer.security.ssl.dataChannelPolicy `
+-Value 0
 
 Set-ItemProperty "IIS:\Sites\$ftpSite" `
 -Name ftpServer.userIsolation.mode `
@@ -219,12 +248,15 @@ Add-WebConfiguration `
 -Value @{accessType="Allow";roles="ftpusuarios";permissions="Read,Write"}
 
 Restart-Service ftpsvc
+iisreset
 
 Write-Host "FTP configurado"
 
 Log "FTP configurado"
 
 }
+
+
 
 # ------------------------------------------------------------
 # CREAR USUARIO
