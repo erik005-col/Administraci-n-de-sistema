@@ -1,7 +1,8 @@
 # ============================================================
-# http_functions.ps1
+# http_funciones.ps1
 # Funciones para despliegue de servidores HTTP en Windows
-# Windows Server 2019 Core (sin GUI) - PowerShell
+# Windows Server 2022 (sin GUI) - PowerShell
+# Ejecutar como Administrador
 # ============================================================
 
 # ============================================================
@@ -74,11 +75,94 @@ function Gestionar-Firewall {
 }
 
 # ============================================================
-# Verificar winget (sin intentar instalarlo en Server Core)
+# Verificar winget
 # ============================================================
 function Verificar-Winget {
     if (Get-Command winget -ErrorAction SilentlyContinue) { return $true }
     return $false
+}
+
+# ============================================================
+# Resolucion de nombres de cuentas por SID (independiente del idioma)
+# ============================================================
+function Obtener-NombreCuenta {
+    param([string]$Sid)
+    try {
+        $obj = New-Object System.Security.Principal.SecurityIdentifier($Sid)
+        return $obj.Translate([System.Security.Principal.NTAccount]).Value
+    } catch {
+        return $null
+    }
+}
+
+# ============================================================
+# Verificar e instalar Chocolatey si no esta presente
+# ============================================================
+function Asegurar-Chocolatey {
+    if (Get-Command choco -ErrorAction SilentlyContinue) { return $true }
+
+    Write-Host "Instalando Chocolatey (gestor de paquetes)..." -ForegroundColor Yellow
+    try {
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        Set-ExecutionPolicy Bypass -Scope Process -Force
+        Invoke-Expression ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
+        $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" +
+                    [System.Environment]::GetEnvironmentVariable("Path","User")
+        Write-Host "Chocolatey instalado correctamente." -ForegroundColor Green
+        return $true
+    } catch {
+        Write-Host "No se pudo instalar Chocolatey: $($_.Exception.Message)" -ForegroundColor Red
+        return $false
+    }
+}
+
+# ============================================================
+# Descargar archivo usando BITS con fallback a WebClient
+# BITS es el servicio de descarga nativo de Windows Server,
+# maneja cortes de conexion y reanuda automaticamente.
+# ============================================================
+function Descargar-Archivo {
+    param(
+        [string]$Url,
+        [string]$Destino
+    )
+
+    # Limpiar descarga previa incompleta
+    if (Test-Path $Destino) { Remove-Item $Destino -Force }
+
+    Write-Host "Descargando desde $Url..." -ForegroundColor Cyan
+
+    # Metodo 1: BITS (mas estable en Windows Server)
+    try {
+        Import-Module BitsTransfer -ErrorAction Stop
+        Start-BitsTransfer -Source $Url -Destination $Destino -ErrorAction Stop
+        Write-Host "Descarga completada via BITS." -ForegroundColor Green
+        return $true
+    } catch {
+        Write-Host "BITS fallo, intentando WebClient..." -ForegroundColor Yellow
+    }
+
+    # Metodo 2: WebClient con User-Agent curl
+    try {
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        $wc = New-Object System.Net.WebClient
+        $wc.Headers.Add("User-Agent", "curl/7.68.0")
+        $wc.DownloadFile($Url, $Destino)
+        Write-Host "Descarga completada via WebClient." -ForegroundColor Green
+        return $true
+    } catch {
+        Write-Host "WebClient fallo, intentando Invoke-WebRequest..." -ForegroundColor Yellow
+    }
+
+    # Metodo 3: Invoke-WebRequest
+    try {
+        Invoke-WebRequest -Uri $Url -OutFile $Destino -UseBasicParsing -UserAgent "curl/7.68.0" -ErrorAction Stop
+        Write-Host "Descarga completada via Invoke-WebRequest." -ForegroundColor Green
+        return $true
+    } catch {
+        Write-Host "Error: No se pudo descargar el archivo. Verifique la conexion a internet." -ForegroundColor Red
+        return $false
+    }
 }
 
 # ============================================================
@@ -93,10 +177,10 @@ function Listar-Versiones-IIS {
     if (Test-Path $iisPath) {
         $ver = (Get-Item $iisPath).VersionInfo.ProductVersion
     } else {
-        $ver = "10.0 (Windows Server 2019)"
+        $ver = "10.0 (Windows Server 2022)"
     }
 
-    Write-Host "1) $ver  (Estable - incluida en Windows Server 2019)"
+    Write-Host "1) $ver  (Estable - incluida en Windows Server 2022)"
     Write-Host "2) $ver  (LTS - misma version de sistema)"
     Write-Host ""
     Write-Host "Nota: IIS se instala desde roles de Windows. La version depende del OS." -ForegroundColor Yellow
@@ -215,28 +299,13 @@ function Configurar-Seguridad-IIS {
 # ============================================================
 # Apache Win64: Listar versiones
 # ============================================================
-
 function Listar-Versiones-Apache {
 
     Write-Host ""
     Write-Host "Consultando versiones disponibles de Apache..." -ForegroundColor Cyan
 
-    # Instalar Chocolatey si no esta presente (gestor de paquetes para Windows Server 2019)
-    if (-not (Get-Command choco -ErrorAction SilentlyContinue)) {
-        Write-Host "Instalando Chocolatey (gestor de paquetes)..." -ForegroundColor Yellow
-        try {
-            [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-            Set-ExecutionPolicy Bypass -Scope Process -Force
-            Invoke-Expression ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
-            $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" +
-                        [System.Environment]::GetEnvironmentVariable("Path","User")
-            Write-Host "Chocolatey instalado correctamente." -ForegroundColor Green
-        } catch {
-            Write-Host "No se pudo instalar Chocolatey: $($_.Exception.Message)" -ForegroundColor Red
-        }
-    }
+    Asegurar-Chocolatey | Out-Null
 
-    # Consultar versiones disponibles via Chocolatey
     $latest = ""
     $lts    = ""
     $oldest = ""
@@ -259,7 +328,6 @@ function Listar-Versiones-Apache {
         }
     }
 
-    # Fallback con versiones conocidas de Chocolatey
     if (-not $latest) { $latest = "2.4.55" }
     if (-not $lts)    { $lts    = "2.4.54" }
     if (-not $oldest) { $oldest = "2.4.52" }
@@ -276,6 +344,9 @@ function Listar-Versiones-Apache {
     $global:APACHE_OLDEST = $oldest
 }
 
+# ============================================================
+# Apache Win64: Instalar y configurar
+# ============================================================
 function Instalar-Apache {
     param([string]$Version, [int]$Puerto)
 
@@ -284,26 +355,22 @@ function Instalar-Apache {
 
     $apacheBase = "C:\Apache24"
 
-    # Verificar que Chocolatey esta disponible
     if (-not (Get-Command choco -ErrorAction SilentlyContinue)) {
         Write-Host "Error: Chocolatey no disponible. Ejecute primero la opcion de listar versiones." -ForegroundColor Red
         return
     }
 
-    # Detener servicios e instancias previas
     Stop-Service -Name "Apache2.4" -Force -ErrorAction SilentlyContinue
     Stop-Service -Name "Apache"    -Force -ErrorAction SilentlyContinue
     Start-Sleep -Seconds 2
     Get-Process -Name "httpd" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 
-    # Desinstalar version previa si existe
     if (Test-Path "$apacheBase\bin\httpd.exe") {
         Write-Host "Desinstalando version previa de Apache..." -ForegroundColor Yellow
         choco uninstall apache-httpd --yes --no-progress 2>&1 | Out-Null
         Remove-Item $apacheBase -Recurse -Force -ErrorAction SilentlyContinue
     }
 
-    # Instalar con Chocolatey — versión especifica, sin registrar servicio aun (/noService)
     Write-Host "Descargando e instalando Apache $Version (puede tardar unos minutos)..." -ForegroundColor Cyan
     $chocoOut = choco install apache-httpd `
         --version $Version `
@@ -321,12 +388,10 @@ function Instalar-Apache {
         return
     }
 
-    # Verificar que httpd.exe existe — Chocolatey a veces crea subcarpeta extra (C:\Apache24\Apache24)
     if (-not (Test-Path "$apacheBase\bin\httpd.exe")) {
         $encontrado = Get-ChildItem "C:\" -Filter "httpd.exe" -Recurse -Depth 4 -ErrorAction SilentlyContinue |
                       Select-Object -First 1
         if ($encontrado) {
-            # DirectoryName = ...\bin  →  Parent = carpeta raiz de Apache
             $apacheBase = Split-Path $encontrado.DirectoryName -Parent
             Write-Host "Apache encontrado en: $apacheBase" -ForegroundColor Yellow
         } else {
@@ -335,7 +400,6 @@ function Instalar-Apache {
         }
     }
 
-    # Doble verificacion: si bin\httpd.exe no esta directamente en $apacheBase, buscar subcarpeta
     if (-not (Test-Path "$apacheBase\bin\httpd.exe")) {
         $sub = Get-ChildItem $apacheBase -Directory | Where-Object { Test-Path "$($_.FullName)\bin\httpd.exe" } | Select-Object -First 1
         if ($sub) {
@@ -361,7 +425,6 @@ function Instalar-Apache {
 
     Crear-Usuario-Restringido -Servicio "Apache" -Directorio $webRoot
 
-    # Actualizar ServerRoot en httpd.conf (Chocolatey puede dejarlo incorrecto)
     $confContent = Get-Content $confPath -Raw
     if ($confContent -match 'Define SRVROOT "([^"]+)"') {
         $srvrootActual = $matches[1]
@@ -372,7 +435,6 @@ function Instalar-Apache {
         }
     }
 
-    # Registrar e iniciar servicio
     Write-Host "Registrando servicio Apache..." -ForegroundColor Cyan
     & "$apacheBase\bin\httpd.exe" -k install 2>&1 | Out-Null
     Start-Sleep -Seconds 2
@@ -381,7 +443,6 @@ function Instalar-Apache {
     Start-Service -Name "Apache2.4" -ErrorAction SilentlyContinue
     Start-Sleep -Seconds 3
 
-    # Verificar que esta escuchando en el puerto
     $escuchando = Test-NetConnection -ComputerName "127.0.0.1" -Port $Puerto -InformationLevel Quiet -ErrorAction SilentlyContinue
     if ($escuchando) {
         Write-Host "Apache escuchando en puerto $Puerto correctamente." -ForegroundColor Green
@@ -392,7 +453,6 @@ function Instalar-Apache {
         if (Test-Path $errorLog) {
             Get-Content $errorLog -Tail 8 | ForEach-Object { Write-Host "  $_" -ForegroundColor Gray }
         }
-        # Intentar arranque directo
         & "$apacheBase\bin\httpd.exe" -k start 2>&1 | Out-Null
         Start-Sleep -Seconds 3
         $escuchando2 = Test-NetConnection -ComputerName "127.0.0.1" -Port $Puerto -InformationLevel Quiet -ErrorAction SilentlyContinue
@@ -414,6 +474,10 @@ function Instalar-Apache {
     Write-Host "Puerto   : $Puerto"
     Write-Host "=====================================" -ForegroundColor Green
 }
+
+# ============================================================
+# Apache: Configurar seguridad
+# ============================================================
 function Configurar-Seguridad-Apache {
     param([string]$ApacheBase)
 
@@ -429,7 +493,7 @@ TraceEnable Off
     Header always set X-Content-Type-Options "nosniff"
 </IfModule>
 
-<Directory "${SRVROOT}/htdocs">
+<Directory "`${SRVROOT}/htdocs">
     <LimitExcept GET POST HEAD>
         Require all denied
     </LimitExcept>
@@ -449,26 +513,17 @@ TraceEnable Off
 
 # ============================================================
 # Nginx Windows: Listar versiones
+# Las 3 versiones se obtienen directamente desde nginx.org
 # ============================================================
 function Listar-Versiones-Nginx {
 
     Write-Host ""
     Write-Host "Consultando versiones disponibles de Nginx..." -ForegroundColor Cyan
 
-    $latest = ""
-
-    $wingetOk = Verificar-Winget
-    if ($wingetOk) {
-        try {
-            $raw = winget show Nginx.Nginx 2>&1 | Out-String
-            $versionLine = ($raw -split "`n") | Where-Object { $_ -match "Version\s*:" } | Select-Object -First 1
-            if ($versionLine -match ":\s*(.+)") { $latest = $matches[1].Trim() }
-        } catch {}
-    }
-
-    if (-not $latest) { $latest = "1.26.2" }
-    $lts    = "1.24.0"
-    $oldest = "1.22.1"
+    # Versiones fijas disponibles en nginx.org/download
+    $latest = "1.27.4"
+    $lts    = "1.26.3"
+    $oldest = "1.24.0"
 
     Write-Host ""
     Write-Host "Versiones disponibles de Nginx:" -ForegroundColor Cyan
@@ -484,6 +539,8 @@ function Listar-Versiones-Nginx {
 
 # ============================================================
 # Nginx Windows: Instalar y configurar
+# Usa BITS (servicio nativo de Windows) para descarga estable
+# con fallback a WebClient e Invoke-WebRequest
 # ============================================================
 function Instalar-Nginx {
     param(
@@ -495,10 +552,11 @@ function Instalar-Nginx {
 
     taskkill /f /im nginx.exe 2>&1 | Out-Null
     Stop-Service -Name "nginx" -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 2
 
     $nginxBase = "C:\nginx"
 
-    # Verificar si la version instalada coincide con la solicitada
+    # Verificar version instalada
     $versionInstalada = ""
     if (Test-Path "$nginxBase\nginx.exe") {
         $vOut = (& "$nginxBase\nginx.exe" -v 2>&1) | Out-String
@@ -519,17 +577,15 @@ function Instalar-Nginx {
         $zipUrl  = "https://nginx.org/download/$zipName"
         $zipDest = "$env:TEMP\nginx.zip"
 
-        Write-Host "Descargando Nginx $Version desde nginx.org..." -ForegroundColor Cyan
-        Write-Host "(Esto puede tardar unos segundos)" -ForegroundColor Yellow
+        # Descargar usando BITS con fallback
+        $descargaOk = Descargar-Archivo -Url $zipUrl -Destino $zipDest
+        if (-not $descargaOk) { return }
 
-        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-
-        try {
-            $wc = New-Object System.Net.WebClient
-            $wc.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
-            $wc.DownloadFile($zipUrl, $zipDest)
-        } catch {
-            Invoke-WebRequest -Uri $zipUrl -OutFile $zipDest -UseBasicParsing -ErrorAction Stop
+        # Verificar que el ZIP no esta corrupto (debe pesar al menos 500 KB)
+        if ((Get-Item $zipDest).Length -lt 500000) {
+            Write-Host "Error: Descarga incompleta o corrupta. Intente de nuevo." -ForegroundColor Red
+            Remove-Item $zipDest -Force -ErrorAction SilentlyContinue
+            return
         }
 
         Write-Host "Extrayendo archivos..." -ForegroundColor Cyan
@@ -590,14 +646,12 @@ http {
     }
 }
 "@
-    # Sin BOM para que nginx pueda leer el archivo correctamente
     [System.IO.File]::WriteAllText($confPath, $nginxConf, [System.Text.UTF8Encoding]::new($false))
 
     Crear-Index -Servicio "Nginx" -Version $Version -Puerto $Puerto -Directorio $webRoot
 
     Crear-Usuario-Restringido -Servicio "Nginx" -Directorio $webRoot
 
-    # Iniciar nginx y verificar que responde
     taskkill /f /im nginx.exe 2>&1 | Out-Null
     Start-Sleep -Seconds 1
     Start-Process -FilePath $nginxExe -WorkingDirectory $nginxBase -WindowStyle Hidden
@@ -660,12 +714,15 @@ function Crear-Index {
 </html>
 "@
 
-    $html | Set-Content "$Directorio\index.html" -Encoding UTF8
+    [System.IO.File]::WriteAllText("$Directorio\index.html", $html, [System.Text.Encoding]::UTF8)
     Write-Host "index.html creado en $Directorio" -ForegroundColor Green
 }
 
 # ============================================================
 # Crear usuario dedicado con permisos restringidos (NTFS)
+# SIDs usados:
+#   S-1-5-18        = NT AUTHORITY\SYSTEM  (o SISTEMA en español)
+#   S-1-5-32-544    = BUILTIN\Administrators (o BUILTIN\Administradores en español)
 # ============================================================
 function Crear-Usuario-Restringido {
     param(
@@ -707,7 +764,12 @@ function Crear-Usuario-Restringido {
             "Allow"
         )
 
-        foreach ($cuenta in @("NT AUTHORITY\SYSTEM", "BUILTIN\Administrators")) {
+        $sidSystem = New-Object System.Security.Principal.SecurityIdentifier("S-1-5-18")
+        $sidAdmins = New-Object System.Security.Principal.SecurityIdentifier("S-1-5-32-544")
+        $cuentaSystem = $sidSystem.Translate([System.Security.Principal.NTAccount]).Value
+        $cuentaAdmins = $sidAdmins.Translate([System.Security.Principal.NTAccount]).Value
+
+        foreach ($cuenta in @($cuentaSystem, $cuentaAdmins)) {
             $regla = New-Object System.Security.AccessControl.FileSystemAccessRule(
                 $cuenta,
                 "FullControl",

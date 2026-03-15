@@ -1,8 +1,7 @@
 # ============================================================
-# main.ps1
-# Menu principal - Despliegue de servidores HTTP en Windows
-# Windows Server 2019 Core (sin GUI) - PowerShell
-# Ejecutar como Administrador
+# Windows Server 2022 (sin GUI) - PowerShell
+# Erik ortiz leal
+# grupo de 301
 # ============================================================
 
 # Verificar que se ejecuta como Administrador
@@ -14,7 +13,7 @@ if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
 
 # Cargar funciones
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
-. "$scriptDir\funciones.ps1"
+. "$scriptDir\http_funciones.ps1"
 
 # ============================================================
 # Funcion auxiliar: leer opcion validada (sin caracteres especiales)
@@ -29,7 +28,6 @@ function Leer-Opcion {
         Write-Host $Prompt -NoNewline
         $input = Read-Host
 
-        # Validar que no sea nulo ni tenga caracteres especiales
         if ([string]::IsNullOrWhiteSpace($input)) {
             Write-Host "Entrada invalida. Intente de nuevo." -ForegroundColor Red
             continue
@@ -70,7 +68,6 @@ function Leer-Puerto {
         if ($resultado) {
             return [int]$input
         }
-        # Si Validar-Puerto falla ya imprime el mensaje de error
     }
 }
 
@@ -100,7 +97,7 @@ while ($true) {
     Write-Host ""
     Write-Host "==============================" -ForegroundColor Cyan
     Write-Host "  DESPLIEGUE SERVIDORES HTTP  " -ForegroundColor Cyan
-    Write-Host "    Windows Server 2019       " -ForegroundColor Cyan
+    Write-Host "    Windows Server 2022       " -ForegroundColor Cyan
     Write-Host "==============================" -ForegroundColor Cyan
     Write-Host ""
     Write-Host "1) IIS (Internet Information Services) - Obligatorio"
@@ -121,7 +118,6 @@ while ($true) {
 
             $verNum = Leer-Opcion -Prompt "Seleccione numero de version [1-2]: " -Validas @("1","2")
 
-            # IIS version es la del sistema, ambas opciones retornan la misma
             $version = "10.0"
 
             $puerto = Leer-Puerto
