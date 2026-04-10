@@ -1,6 +1,6 @@
 # ============================================================
 # main.ps1
-# Menu principal - Despliegue de servidores HTTP en Windows
+# Menu HTTP - Despliegue de servidores HTTP en Windows
 # Windows Server 2022 (sin GUI) - PowerShell
 # Ejecutar como Administrador
 # ============================================================
@@ -91,7 +91,7 @@ function Resolver-Version {
 }
 
 # ============================================================
-# Bucle principal del menu
+# Bucle principal del menu HTTP
 # ============================================================
 while ($true) {
 
@@ -101,10 +101,10 @@ while ($true) {
     Write-Host "    Windows Server 2022       " -ForegroundColor Cyan
     Write-Host "==============================" -ForegroundColor Cyan
     Write-Host ""
-    Write-Host "1) IIS (Internet Information Services) - Obligatorio"
+    Write-Host "1) IIS (Internet Information Services)"
     Write-Host "2) Apache HTTP Server (Win64)"
     Write-Host "3) Nginx para Windows"
-    Write-Host "4) Salir"
+    Write-Host "4) Regresar al menu principal"
     Write-Host ""
 
     $opcion = Leer-Opcion -Prompt "Seleccione una opcion [1-4]: " -Validas @("1","2","3","4")
@@ -165,11 +165,11 @@ while ($true) {
         }
 
         # --------------------------------------------------
-        # Salir
+        # Regresar
         # --------------------------------------------------
         "4" {
-            Write-Host "Saliendo..." -ForegroundColor Yellow
-            exit 0
+            Write-Host "Regresando al menu principal..." -ForegroundColor Yellow
+            return
         }
 
     }
