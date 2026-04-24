@@ -1,0 +1,3 @@
+takeown /f "C:\PerfilesMoviles\sperez.V6" /r /d y 2>$null
+icacls "C:\PerfilesMoviles\sperez.V6" /grant Administrators:F /t 2>$null
+Get-ChildItem "C:\PerfilesMoviles\sperez.V6" -Recurse

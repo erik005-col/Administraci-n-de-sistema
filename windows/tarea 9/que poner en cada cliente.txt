@@ -1,0 +1,5 @@
+bejecutar el script en windwos: 
+powershell -ExecutionPolicy Bypass -File unir_windows.ps1 
+sc.exe config AppIDSvc start= auto
+sc.exe start AppIDSvc 
+y cuando se inicie sesion con el usuario se poner gpupdate /force

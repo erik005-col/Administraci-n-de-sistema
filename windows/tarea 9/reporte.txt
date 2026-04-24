@@ -1,0 +1,16 @@
+﻿
+Fecha                Usuario                       Dominio   IP_Origen Razon  EventoID
+-----                -------                       -------   --------- -----  --------
+4/23/2026 5:41:55 PM Administrator                 PRACTICA8 127.0.0.1 %%2313     4625
+4/23/2026 4:51:06 PM administrator@practica8.local           -         %%2313     4625
+4/23/2026 4:50:55 PM administrator@practica8.local           -         %%2313     4625
+4/23/2026 4:50:47 PM administrator@practica8.local           -         %%2313     4625
+4/23/2026 4:50:26 PM administrator@practica8.local           -         %%2313     4625
+4/23/2026 4:50:15 PM administrator@practica8.local           -         %%2313     4625
+4/23/2026 4:50:08 PM administrator@practica8.local           -         %%2313     4625
+4/23/2026 4:49:50 PM administrator@practica8.local           -         %%2313     4625
+4/23/2026 4:43:11 PM Administrator                 PRACTICA8 127.0.0.1 %%2313     4625
+4/23/2026 1:56:09 PM admin_storage                 PRACTICA8 127.0.0.1 %%2313     4625
+
+
+
