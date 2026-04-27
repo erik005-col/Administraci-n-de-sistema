@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Práctica 10 — Infraestructura Docker</title>
+  <!-- CSS externo como recurso estático -->
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="contenedor">
+
+    <header>
+      <!-- Imagen SVG como recurso estático -->
+      <img src="logo.svg" alt="Logo Docker" class="logo-img">
+      <h1>Infraestructura con Docker</h1>
+      <p class="subtitulo">Práctica 10 &mdash; Virtualización y Contenedores</p>
+    </header>
+
+    <div class="grid">
+
+      <div class="tarjeta">
+        <!-- Ícono SVG inline como recurso visual del servicio web -->
+        <svg class="icono" viewBox="0 0 52 52" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <rect x="2" y="8" width="48" height="36" rx="5" stroke="#00ff9f" stroke-width="2.5"/>
+          <path d="M2 16h48" stroke="#00ff9f" stroke-width="2"/>
+          <circle cx="10" cy="12" r="2" fill="#00ff9f"/>
+          <circle cx="18" cy="12" r="2" fill="#00c8ff"/>
+          <circle cx="26" cy="12" r="2" fill="#ffaa00"/>
+          <path d="M12 28h12M12 34h20" stroke="#00c8ff" stroke-width="2" stroke-linecap="round"/>
+        </svg>
+        <h2>Servidor Web</h2>
+        <p>Nginx sobre Alpine Linux. Imagen personalizada con usuario no‑root y server tokens desactivados.</p>
+        <span class="badge">Puerto 80 → 8080</span>
+      </div>
+
+      <div class="tarjeta">
+        <svg class="icono" viewBox="0 0 52 52" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <ellipse cx="26" cy="14" rx="18" ry="7" stroke="#00c8ff" stroke-width="2.5"/>
+          <path d="M8 14v10c0 3.87 8.06 7 18 7s18-3.13 18-7V14" stroke="#00c8ff" stroke-width="2.5"/>
+          <path d="M8 24v10c0 3.87 8.06 7 18 7s18-3.13 18-7V24" stroke="#00c8ff" stroke-width="2.5"/>
+          <circle cx="26" cy="14" r="3" fill="#00ff9f"/>
+        </svg>
+        <h2>Base de Datos</h2>
+        <p>PostgreSQL 15 en Alpine. Volumen persistente <code>db_data</code> con respaldo automático al host.</p>
+        <span class="badge">Puerto 5432</span>
+      </div>
+
+      <div class="tarjeta">
+        <svg class="icono" viewBox="0 0 52 52" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <rect x="6" y="10" width="40" height="32" rx="4" stroke="#ffaa00" stroke-width="2.5"/>
+          <path d="M6 20h40" stroke="#ffaa00" stroke-width="2"/>
+          <path d="M26 30 L20 36 M26 30 L32 36 M26 30 V24" stroke="#00ff9f" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        <h2>Servidor FTP</h2>
+        <p>Transferencia de archivos al volumen compartido <code>web_content</code>, accesible directamente por Nginx.</p>
+        <span class="badge">Puerto 21</span>
+      </div>
+
+    </div>
+
+    <div class="status-bar">
+      <div class="status-item"><span class="dot"></span> servidor_web_p10 — ACTIVO</div>
+      <div class="status-item"><span class="dot azul"></span> base_datos_p10 — ACTIVO</div>
+      <div class="status-item"><span class="dot naranja"></span> servidor_ftp_p10 — ACTIVO</div>
+      <div class="status-item" style="margin-left:auto; color: rgba(200,216,232,0.4)">
+        Red: infra_red | 172.20.0.0/16
+      </div>
+    </div>
+
+    <footer>
+      Oracle Linux &bull; Docker Compose &bull; Práctica 10 &bull; 2025
+    </footer>
+
+  </div>
+</body>
+</html>

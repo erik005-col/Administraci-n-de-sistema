@@ -1,0 +1,202 @@
+/* style.css - Recursos estáticos de Práctica 10 */
+@import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Exo+2:wght@300;600;900&display=swap');
+
+:root {
+  --verde:    #00ff9f;
+  --azul:     #00c8ff;
+  --oscuro:   #0a0e1a;
+  --panel:    rgba(0, 255, 159, 0.06);
+  --borde:    rgba(0, 255, 159, 0.25);
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: 'Exo 2', sans-serif;
+  background-color: var(--oscuro);
+  color: #c8d8e8;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+  overflow-x: hidden;
+}
+
+/* Fondo animado con gradiente */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background:
+    radial-gradient(ellipse 80% 50% at 20% 40%, rgba(0,200,255,0.07) 0%, transparent 60%),
+    radial-gradient(ellipse 60% 80% at 80% 60%, rgba(0,255,159,0.05) 0%, transparent 60%);
+  pointer-events: none;
+  z-index: 0;
+}
+
+.contenedor {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  max-width: 860px;
+}
+
+/* Encabezado */
+header {
+  text-align: center;
+  margin-bottom: 2.5rem;
+  animation: fadeDown 0.8s ease both;
+}
+
+header .logo-img {
+  width: 90px;
+  height: 90px;
+  margin: 0 auto 1.2rem;
+  display: block;
+  filter: drop-shadow(0 0 18px var(--verde));
+  animation: pulso 3s ease-in-out infinite;
+}
+
+@keyframes pulso {
+  0%, 100% { filter: drop-shadow(0 0 12px var(--verde)); }
+  50%       { filter: drop-shadow(0 0 28px var(--azul)); }
+}
+
+header h1 {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: clamp(1.5rem, 4vw, 2.4rem);
+  color: var(--verde);
+  letter-spacing: 0.06em;
+  text-shadow: 0 0 20px rgba(0,255,159,0.5);
+}
+
+header p.subtitulo {
+  font-size: 0.9rem;
+  font-weight: 300;
+  color: rgba(200,216,232,0.6);
+  margin-top: 0.4rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+/* Grid de tarjetas */
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 1.2rem;
+  margin-bottom: 2rem;
+}
+
+.tarjeta {
+  background: var(--panel);
+  border: 1px solid var(--borde);
+  border-radius: 12px;
+  padding: 1.4rem 1.2rem;
+  transition: transform 0.25s, box-shadow 0.25s;
+  animation: fadeUp 0.7s ease both;
+}
+
+.tarjeta:nth-child(1) { animation-delay: 0.1s; }
+.tarjeta:nth-child(2) { animation-delay: 0.25s; }
+.tarjeta:nth-child(3) { animation-delay: 0.4s; }
+
+.tarjeta:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 8px 32px rgba(0,255,159,0.12);
+}
+
+.tarjeta .icono {
+  width: 52px;
+  height: 52px;
+  margin-bottom: 0.9rem;
+}
+
+.tarjeta h2 {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--verde);
+  margin-bottom: 0.4rem;
+  font-family: 'Share Tech Mono', monospace;
+}
+
+.tarjeta p {
+  font-size: 0.82rem;
+  line-height: 1.55;
+  color: rgba(200,216,232,0.75);
+}
+
+.badge {
+  display: inline-block;
+  margin-top: 0.7rem;
+  background: rgba(0,255,159,0.12);
+  border: 1px solid var(--verde);
+  color: var(--verde);
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 0.7rem;
+  padding: 2px 10px;
+  border-radius: 20px;
+  letter-spacing: 0.08em;
+}
+
+/* Barra de estado */
+.status-bar {
+  background: var(--panel);
+  border: 1px solid var(--borde);
+  border-radius: 10px;
+  padding: 1rem 1.4rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.2rem;
+  align-items: center;
+  animation: fadeUp 0.7s 0.5s ease both;
+}
+
+.status-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 0.78rem;
+  color: rgba(200,216,232,0.8);
+}
+
+.dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--verde);
+  box-shadow: 0 0 8px var(--verde);
+  animation: parpadeo 1.8s ease-in-out infinite;
+}
+
+.dot.azul { background: var(--azul); box-shadow: 0 0 8px var(--azul); animation-delay: 0.6s; }
+.dot.naranja { background: #ffaa00; box-shadow: 0 0 8px #ffaa00; animation-delay: 1.2s; }
+
+@keyframes parpadeo {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.3; }
+}
+
+/* Animaciones de entrada */
+@keyframes fadeDown {
+  from { opacity: 0; transform: translateY(-20px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(20px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+footer {
+  text-align: center;
+  margin-top: 2rem;
+  font-size: 0.72rem;
+  color: rgba(200,216,232,0.3);
+  font-family: 'Share Tech Mono', monospace;
+  letter-spacing: 0.1em;
+  animation: fadeUp 0.7s 0.7s ease both;
+  opacity: 0;
+  animation-fill-mode: forwards;
+}
